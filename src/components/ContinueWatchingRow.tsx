@@ -1,0 +1,178 @@
+// "Continue Watching" row for the Home page. Lists recent in-progress items
+// (from watch_progress, populated by the MPV IPC tracker). Clicking a card
+// opens the media detail page so the user can pick a fresh source — we never
+// reuse old stream URLs because they may have expired.
+//
+// Right-click adds Continue-Watching-specific actions on top of the standard
+// Open Details / Library options.
+
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useProfile } from "../state/ProfileContext.js";
+import { useLibrary } from "../state/LibraryContext.js";
+import { useContextMenu } from "../state/ContextMenuContext.js";
+import { useToast } from "../state/ToastContext.js";
+import { formatTime } from "../features/player/playability.js";
+import type { WatchProgress } from "../types/preload.js";
+
+function pct(p: WatchProgress): number {
+  if (!p.durationSeconds || p.durationSeconds <= 0) return 0;
+  return Math.min(100, Math.max(0, (p.progressSeconds / p.durationSeconds) * 100));
+}
+
+function episodeLabel(p: WatchProgress): string | null {
+  if (p.type !== "series") return null;
+  if (typeof p.season === "number" && typeof p.episode === "number") {
+    return `S${String(p.season).padStart(2, "0")}E${String(p.episode).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+export default function ContinueWatchingRow() {
+  const { profile } = useProfile();
+  const { isInLibrary, add, remove } = useLibrary();
+  const { openContextMenu } = useContextMenu();
+  const { toast } = useToast();
+  const navigate = useNavigate();
+  const [items, setItems] = useState<WatchProgress[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  const refresh = useCallback(() => {
+    if (!profile) return;
+    window.mediaCenter.progress
+      .list({ profileId: profile.id, limit: 20 })
+      .then((rows) => setItems(rows))
+      .catch(() => setItems([]))
+      .finally(() => setLoaded(true));
+  }, [profile]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  function openMenu(e: React.MouseEvent, p: WatchProgress) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!profile) return;
+    const to = `/media/${encodeURIComponent(p.type)}/${encodeURIComponent(p.mediaId)}`;
+    const inLib = isInLibrary(p.type, p.mediaId);
+    openContextMenu(e.clientX, e.clientY, [
+      { label: "Open Details", onSelect: () => navigate(to) },
+      inLib
+        ? {
+            label: "Remove from Library",
+            danger: true,
+            onSelect: async () => {
+              await remove(p.type, p.mediaId);
+              toast("Removed from Library");
+            },
+          }
+        : {
+            label: "Add to Library",
+            onSelect: async () => {
+              await add({
+                type: p.type,
+                mediaId: p.mediaId,
+                title: p.title,
+                poster: p.poster ?? null,
+                releaseInfo: null,
+              });
+              toast("Added to Library");
+            },
+          },
+      {
+        label: "Reset Watch Progress",
+        onSelect: async () => {
+          await window.mediaCenter.progress.reset({
+            profileId: profile.id,
+            mediaId: p.mediaId,
+            playableId: p.playableId,
+          });
+          // After reset, progress is 0 so it leaves the row.
+          setItems((prev) =>
+            prev.filter(
+              (x) => !(x.mediaId === p.mediaId && x.playableId === p.playableId),
+            ),
+          );
+          toast("Progress Reset");
+        },
+      },
+      {
+        label: "Remove from Continue Watching",
+        danger: true,
+        onSelect: async () => {
+          await window.mediaCenter.progress.clear({
+            profileId: profile.id,
+            mediaId: p.mediaId,
+            playableId: p.playableId,
+          });
+          setItems((prev) =>
+            prev.filter(
+              (x) => !(x.mediaId === p.mediaId && x.playableId === p.playableId),
+            ),
+          );
+          toast("Removed from Continue Watching");
+        },
+      },
+    ]);
+  }
+
+  // Nothing to show — render nothing (no empty-state clutter on Home).
+  if (!loaded || items.length === 0) return null;
+
+  return (
+    <section className="catalog-row continue-watching">
+      <header className="catalog-row__header">
+        <h2 className="catalog-row__title">Continue Watching</h2>
+      </header>
+      <div className="catalog-row__strip">
+        {items.map((p) => {
+          const to = `/media/${encodeURIComponent(p.type)}/${encodeURIComponent(p.mediaId)}`;
+          const label = episodeLabel(p);
+          return (
+            <Link
+              key={`${p.type}:${p.mediaId}:${p.playableId}`}
+              to={to}
+              className="cw-card"
+              title={p.title}
+              onContextMenu={(e) => openMenu(e, p)}
+            >
+              <div className="cw-card__poster-wrap">
+                {p.poster ? (
+                  <img
+                    className="cw-card__poster"
+                    src={p.poster}
+                    alt=""
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                    }}
+                  />
+                ) : (
+                  <div className="cw-card__poster cw-card__poster--placeholder" aria-hidden>
+                    {p.title.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div className="cw-card__resume" aria-hidden>▶ Resume</div>
+                <div className="cw-card__progress">
+                  <div
+                    className="cw-card__progress-fill"
+                    style={{ width: `${pct(p)}%` }}
+                  />
+                </div>
+              </div>
+              <div className="cw-card__title">{p.title}</div>
+              <div className="cw-card__sub muted">
+                {label && <span>{label}</span>}
+                {label && (p.episodeTitle || true) && " · "}
+                {p.type === "series" && p.episodeTitle
+                  ? p.episodeTitle
+                  : `${formatTime(p.progressSeconds)}${p.durationSeconds > 0 ? ` / ${formatTime(p.durationSeconds)}` : ""}`}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
