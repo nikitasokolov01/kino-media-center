@@ -12,7 +12,23 @@ import { BACKENDS } from "../core/player/playerBackends.js";
 import type {
   DefaultPlayerSetting,
   MpvAvailability,
+  PreferredSourceQuality,
 } from "../core/player/types.js";
+
+const QUALITY_OPTIONS: { value: PreferredSourceQuality; label: string }[] = [
+  { value: "best", label: "Best available" },
+  { value: "2160p", label: "4K / 2160p" },
+  { value: "1080p", label: "1080p" },
+  { value: "720p", label: "720p" },
+  { value: "first", label: "First available" },
+];
+
+const ANIME_AUDIO_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Use global default" },
+  { value: "ja", label: "Japanese" },
+  { value: "en", label: "English" },
+  { value: "auto", label: "Original / Auto" },
+];
 
 export default function SettingsPage() {
   const { settings, loading, error, update } = useSettings();
@@ -31,12 +47,18 @@ export default function SettingsPage() {
   // Local inputs for the language fields (debounced save on blur / Enter).
   const [subLangInput, setSubLangInput] = useState(settings.subtitleLanguage);
   const [audioLangInput, setAudioLangInput] = useState(settings.audioLanguage);
+  const [animeAudioInput, setAnimeAudioInput] = useState(
+    settings.animeAudioLanguage,
+  );
   useEffect(() => {
     setSubLangInput(settings.subtitleLanguage);
   }, [settings.subtitleLanguage]);
   useEffect(() => {
     setAudioLangInput(settings.audioLanguage);
   }, [settings.audioLanguage]);
+  useEffect(() => {
+    setAnimeAudioInput(settings.animeAudioLanguage);
+  }, [settings.animeAudioLanguage]);
 
   async function saveSetting(patch: Parameters<typeof update>[0]) {
     setSaveError(null);
@@ -269,6 +291,145 @@ export default function SettingsPage() {
           After MPV starts, the app tries to switch to this audio language if a
           matching track exists. Leave blank to keep the original/default audio.
         </p>
+
+        <div className="form-row" style={{ marginTop: 12 }}>
+          <label className="field-label">
+            Anime default audio language
+            <input
+              type="text"
+              value={animeAudioInput}
+              onChange={(e) => setAnimeAudioInput(e.target.value)}
+              onBlur={() => {
+                const next = animeAudioInput.trim();
+                if (next !== settings.animeAudioLanguage) {
+                  void saveSetting({ animeAudioLanguage: next });
+                }
+              }}
+              placeholder="Use global default (blank), or ja / jpn / Japanese"
+              spellCheck={false}
+              autoComplete="off"
+              className="text-input"
+            />
+          </label>
+        </div>
+        <div className="preset-row">
+          {ANIME_AUDIO_PRESETS.map((p) => (
+            <button
+              key={p.value || "global"}
+              type="button"
+              className={`chip${
+                (settings.animeAudioLanguage || "") === p.value ? " chip--active" : ""
+              }`}
+              onClick={() => {
+                setAnimeAudioInput(p.value);
+                void saveSetting({ animeAudioLanguage: p.value });
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <p className="muted small">
+          Anime is detected from Kitsu/provider signals first, then an explicit
+          "Anime" genre — western animation (e.g. Arcane, The Simpsons) is not
+          treated as anime. When an item is anime, this overrides the global
+          audio language. "Use global default" defers to the setting above;
+          "Original / Auto" keeps MPV's default audio.
+        </p>
+      </section>
+
+      <section className="settings-section">
+        <h2>Source selection</h2>
+        <p className="muted small">
+          When on, the app ranks the fetched sources and marks the best one with
+          an "Auto-selected" badge, plus a "Play Best Source" button. Manual
+          source selection always remains available; playback never starts on
+          its own.
+        </p>
+
+        <div className="radio-row">
+          {([
+            { v: false, title: "Manual (off)", desc: "Pick a source yourself from the list, as before." },
+            { v: true, title: "Auto-select best source", desc: "Rank sources and surface a Play Best Source button." },
+          ] as { v: boolean; title: string; desc: string }[]).map((opt) => (
+            <label key={String(opt.v)} className="radio-card">
+              <input
+                type="radio"
+                name="autoSelectSource"
+                checked={settings.autoSelectSource === opt.v}
+                onChange={() => void saveSetting({ autoSelectSource: opt.v })}
+              />
+              <div>
+                <div className="radio-card__title">{opt.title}</div>
+                <div className="radio-card__desc muted small">{opt.desc}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <label className="checkbox-row" style={{ marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={settings.autoPlayBestSource}
+            onChange={(e) =>
+              void saveSetting({ autoPlayBestSource: e.target.checked })
+            }
+          />
+          <span>
+            Auto-play best source
+            <span className="muted small">
+              {" "}
+              — Automatically start playback using the best available direct
+              source when opening a movie or selecting an episode.
+            </span>
+          </span>
+        </label>
+
+        <div className="form-row" style={{ marginTop: 12 }}>
+          <label className="field-label">
+            Preferred source quality
+            <select
+              className="text-input"
+              value={settings.preferredSourceQuality}
+              onChange={(e) =>
+                void saveSetting({
+                  preferredSourceQuality: e.target.value as PreferredSourceQuality,
+                })
+              }
+            >
+              {QUALITY_OPTIONS.map((q) => (
+                <option key={q.value} value={q.value}>
+                  {q.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="muted small">
+          Only direct HTTP/HTTPS sources are considered (MPV requirement).
+          Fallback: if the preferred quality isn't available, the next best
+          lower quality is used, then higher, then anything detectable, then a
+          first direct playable source. "First available" just takes the first
+          direct source in addon order.
+        </p>
+
+        <label className="checkbox-row" style={{ marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={settings.hideCamSources}
+            onChange={(e) =>
+              void saveSetting({ hideCamSources: e.target.checked })
+            }
+          />
+          <span>
+            Hide / deprioritize CAM &amp; TS sources
+            <span className="muted small">
+              {" "}
+              — low-quality captures are only auto-selected if nothing else is
+              playable.
+            </span>
+          </span>
+        </label>
       </section>
     </div>
   );

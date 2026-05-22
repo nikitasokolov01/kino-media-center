@@ -131,6 +131,11 @@ const api = {
       autoEnableSubtitles?: boolean;
       subtitleLanguage?: string;
       audioLanguage?: string;
+      animeAudioLanguage?: string;
+      autoSelectSource?: boolean;
+      autoPlayBestSource?: boolean;
+      preferredSourceQuality?: "best" | "2160p" | "1080p" | "720p" | "first";
+      hideCamSources?: boolean;
     }) => ipcRenderer.invoke(IPC.SettingsUpdate, patch),
   },
 };

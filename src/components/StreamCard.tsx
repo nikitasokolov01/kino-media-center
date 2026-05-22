@@ -20,15 +20,14 @@ import {
   canBrowserPlay,
   recommendedBackend,
 } from "../core/player/browserPlayer.js";
-import { playWithMpv } from "../core/player/mpvExternal.js";
-import { collectSubtitles } from "../features/player/subtitles.js";
+import { playSourceWithMpv } from "../features/player/playSource.js";
+import { resolveAudioLanguage } from "../core/player/audioPreference.js";
 import { useSettings } from "../state/SettingsContext.js";
 import { useProfile } from "../state/ProfileContext.js";
 import type {
   StreamSourceResult,
   StremioStream,
 } from "../core/stremio/types.js";
-import type { PlayableStreamPayload } from "../core/player/types.js";
 import type { AddonRow } from "../types/preload.js";
 
 interface Props {
@@ -50,6 +49,14 @@ interface Props {
    * user selects one from the player controls afterward.
    */
   subtitleAddons?: AddonRow[];
+  /** Whether this media was classified as anime (drives anime audio default). */
+  isAnime?: boolean;
+  /** True when the auto-selector chose this source — shows an "Auto-selected" badge. */
+  autoSelected?: boolean;
+  /** True when this source is the one currently playing — shows a "Playing" marker. */
+  current?: boolean;
+  /** Fired after this source successfully launches in MPV (used by the Sources dropdown). */
+  onPlayed?: () => void;
 }
 
 function streamText(s: StremioStream): string {
@@ -104,6 +111,10 @@ export default function StreamCard({
   episode,
   startSeconds,
   subtitleAddons,
+  isAnime,
+  autoSelected,
+  current,
+  onPlayed,
 }: Props) {
   const navigate = useNavigate();
   const { settings } = useSettings();
@@ -226,44 +237,28 @@ export default function StreamCard({
     }
     setLaunching("mpv");
 
-    // Auto-collect every available subtitle track in the background and hand
-    // them all to MPV. There is no pre-play subtitle picker — the user selects
-    // a track from the player controls after playback starts. Failures here
-    // must never block playback.
-    let subtitles: PlayableStreamPayload["subtitles"] = [];
+    // Subtitle auto-load + payload build + launch all happen in the shared
+    // routine so this matches the "Play Best Source" path exactly. The audio
+    // language is resolved here (anime vs. global) from current settings.
     try {
-      subtitles = await collectSubtitles(subtitleAddons ?? [], type, playableId);
-    } catch {
-      subtitles = [];
-    }
-    if (import.meta.env.DEV) {
-      console.log(
-        `[subtitles] auto-loading ${subtitles?.length ?? 0} track(s) into MPV for ${type} ${playableId}`,
-      );
-    }
-
-    const payload: PlayableStreamPayload = {
-      type,
-      mediaId,
-      playableId,
-      mediaTitle,
-      episodeTitle,
-      season,
-      episode,
-      poster: mediaPoster,
-      streamUrl: s.url,
-      streamTitle: s.title,
-      streamName: s.name,
-      profileId: profile?.id,
-      startSeconds:
-        typeof startSeconds === "number" && startSeconds > 0
-          ? startSeconds
-          : undefined,
-      subtitles,
-    };
-    try {
-      const res = await playWithMpv(payload);
+      const res = await playSourceWithMpv({
+        result,
+        type,
+        mediaId,
+        playableId,
+        mediaTitle,
+        mediaPoster,
+        episodeTitle,
+        season,
+        episode,
+        startSeconds,
+        subtitleAddons,
+        profileId: profile?.id,
+        audioLanguageOverride: resolveAudioLanguage(settings, isAnime ?? false),
+      });
       if (res.ok) {
+        // Let the parent mark this as the active/current source.
+        onPlayed?.();
         // progressTracking is only present from the MPV-IPC backend; when it's
         // explicitly false, MPV opened but the IPC pipe didn't connect.
         if (res.progressTracking === false) {
@@ -449,7 +444,11 @@ export default function StreamCard({
   }
 
   return (
-    <div className={`stream-card ${open ? "stream-card--open" : ""}`}>
+    <div
+      className={`stream-card ${open ? "stream-card--open" : ""} ${
+        autoSelected ? "stream-card--auto" : ""
+      } ${current ? "stream-card--current" : ""}`}
+    >
       <button
         type="button"
         className="stream-card__summary"
@@ -458,6 +457,16 @@ export default function StreamCard({
       >
         <div className="stream-card__main">
           <div className="stream-card__title-row">
+            {current && (
+              <span className="stream-card__current-badge" title="Currently playing">
+                ● Playing
+              </span>
+            )}
+            {autoSelected && !current && (
+              <span className="stream-card__auto-badge" title="Chosen by auto-select">
+                ★ Auto-selected
+              </span>
+            )}
             <span className="stream-card__name">{s.name ?? source.addonName}</span>
             <span className="stream-card__addon">{source.addonName}</span>
           </div>

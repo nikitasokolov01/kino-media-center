@@ -20,6 +20,7 @@ import { useProfile } from "../state/ProfileContext.js";
 import { useLibrary } from "../state/LibraryContext.js";
 import { useToast } from "../state/ToastContext.js";
 import { addonSupportsResource } from "../core/stremio/meta.js";
+import { isLikelyAnime } from "../core/stremio/anime.js";
 import { formatTime } from "../features/player/playability.js";
 import SourcesSection from "../components/SourcesSection.js";
 import EpisodeSelector from "../components/EpisodeSelector.js";
@@ -373,6 +374,18 @@ export default function MediaPage() {
   const meta = result?.meta;
   const videos = asArray<StremioVideo>(meta?.videos);
 
+  // Anime classification — prefers Kitsu/provider signals over genre guessing.
+  // Drives the anime-specific default audio language when launching MPV.
+  const isAnime = useMemo(
+    () =>
+      isLikelyAnime(meta, {
+        addonId: result?.source.addonId,
+        addonName: result?.source.addonName,
+        mediaId: meta?.id,
+      }),
+    [meta, result],
+  );
+
   // Next episode to watch: first NORMAL episode (season >= 1; season asc,
   // episode asc, then meta order) that isn't completed. Mirrors the DB's
   // getNextEpisodeToWatch so the "Next Up" badge matches what Continue
@@ -472,6 +485,7 @@ export default function MediaPage() {
             mediaPoster={meta.poster}
             episodeTitle={episodeTitle}
             startSeconds={resumeSeconds}
+            isAnime={isAnime}
           />
         )}
       </>

@@ -964,6 +964,21 @@ export function listLibrary(profileId: number): LibraryItem[] {
 
 export type DefaultPlayerSetting = "browser" | "mpv";
 
+export type PreferredSourceQuality =
+  | "best"
+  | "2160p"
+  | "1080p"
+  | "720p"
+  | "first";
+
+const PREFERRED_QUALITIES: PreferredSourceQuality[] = [
+  "best",
+  "2160p",
+  "1080p",
+  "720p",
+  "first",
+];
+
 export interface AppSettings {
   defaultPlayer: DefaultPlayerSetting;
   mpvPath: string;
@@ -983,6 +998,23 @@ export interface AppSettings {
    * "Japanese". Empty string means original/auto (MPV's default).
    */
   audioLanguage: string;
+  /**
+   * Anime-specific preferred audio language. "" = use the global default;
+   * "auto"/"original" = keep MPV's default; otherwise a loose lang value
+   * ("ja"/"jpn"/"Japanese"). Only applied when the media is classified anime.
+   */
+  animeAudioLanguage: string;
+  /** When true, rank sources and surface a "Play Best Source" affordance. */
+  autoSelectSource: boolean;
+  /**
+   * When true, automatically launch the best ranked source in MPV once sources
+   * load for a movie/selected episode (no click needed). Depends on ranking.
+   */
+  autoPlayBestSource: boolean;
+  /** Which quality the auto-selector targets. */
+  preferredSourceQuality: PreferredSourceQuality;
+  /** When true, CAM/TS sources are deprioritized (chosen only as a last resort). */
+  hideCamSources: boolean;
 }
 
 const DEFAULTS: AppSettings = {
@@ -991,6 +1023,11 @@ const DEFAULTS: AppSettings = {
   autoEnableSubtitles: false,
   subtitleLanguage: "en",
   audioLanguage: "",
+  animeAudioLanguage: "",
+  autoSelectSource: false,
+  autoPlayBestSource: false,
+  preferredSourceQuality: "best",
+  hideCamSources: true,
 };
 
 export function getSetting(key: string): string | null {
@@ -1018,6 +1055,11 @@ export function getAppSettings(): AppSettings {
   const autoSubs = getSetting("autoEnableSubtitles");
   const subLang = getSetting("subtitleLanguage");
   const audLang = getSetting("audioLanguage");
+  const animeAud = getSetting("animeAudioLanguage");
+  const autoSel = getSetting("autoSelectSource");
+  const autoPlay = getSetting("autoPlayBestSource");
+  const prefQ = getSetting("preferredSourceQuality");
+  const hideCam = getSetting("hideCamSources");
   return {
     defaultPlayer: dp === "browser" ? "browser" : DEFAULTS.defaultPlayer,
     mpvPath: mpv && mpv.trim().length > 0 ? mpv : DEFAULTS.mpvPath,
@@ -1028,6 +1070,19 @@ export function getAppSettings(): AppSettings {
     // the default when the key is entirely absent.
     subtitleLanguage: subLang === null ? DEFAULTS.subtitleLanguage : subLang,
     audioLanguage: audLang === null ? DEFAULTS.audioLanguage : audLang,
+    animeAudioLanguage:
+      animeAud === null ? DEFAULTS.animeAudioLanguage : animeAud,
+    autoSelectSource:
+      autoSel === null ? DEFAULTS.autoSelectSource : autoSel === "true",
+    autoPlayBestSource:
+      autoPlay === null ? DEFAULTS.autoPlayBestSource : autoPlay === "true",
+    preferredSourceQuality: PREFERRED_QUALITIES.includes(
+      prefQ as PreferredSourceQuality,
+    )
+      ? (prefQ as PreferredSourceQuality)
+      : DEFAULTS.preferredSourceQuality,
+    hideCamSources:
+      hideCam === null ? DEFAULTS.hideCamSources : hideCam === "true",
   };
 }
 
@@ -1047,6 +1102,24 @@ export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.audioLanguage !== undefined) {
     setSetting("audioLanguage", patch.audioLanguage);
+  }
+  if (patch.animeAudioLanguage !== undefined) {
+    setSetting("animeAudioLanguage", patch.animeAudioLanguage);
+  }
+  if (patch.autoSelectSource !== undefined) {
+    setSetting("autoSelectSource", patch.autoSelectSource ? "true" : "false");
+  }
+  if (patch.autoPlayBestSource !== undefined) {
+    setSetting("autoPlayBestSource", patch.autoPlayBestSource ? "true" : "false");
+  }
+  if (patch.preferredSourceQuality !== undefined) {
+    const v = PREFERRED_QUALITIES.includes(patch.preferredSourceQuality)
+      ? patch.preferredSourceQuality
+      : DEFAULTS.preferredSourceQuality;
+    setSetting("preferredSourceQuality", v);
+  }
+  if (patch.hideCamSources !== undefined) {
+    setSetting("hideCamSources", patch.hideCamSources ? "true" : "false");
   }
   return getAppSettings();
 }

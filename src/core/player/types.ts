@@ -46,6 +46,12 @@ export interface PlayableStreamPayload {
    * preferred-language selection and nicer track labels.
    */
   subtitles?: Array<{ url: string; lang?: string; name?: string }>;
+  /**
+   * Effective preferred audio language for THIS playback, resolved in the
+   * renderer (global vs. anime default). "" = no preference (keep MPV default).
+   * When provided, the main process uses it instead of the global setting.
+   */
+  audioLanguageOverride?: string;
 }
 
 export interface MpvOpenResult {
@@ -118,6 +124,13 @@ export interface MpvPlaybackState {
 
 export type DefaultPlayerSetting = "browser" | "mpv";
 
+export type PreferredSourceQuality =
+  | "best"
+  | "2160p"
+  | "1080p"
+  | "720p"
+  | "first";
+
 export interface AppSettings {
   /** Which backend the user prefers when both are viable. */
   defaultPlayer: DefaultPlayerSetting;
@@ -132,6 +145,22 @@ export interface AppSettings {
   subtitleLanguage: string;
   /** Preferred audio language ("ja"/"jpn"/"Japanese"); "" = original/auto. */
   audioLanguage: string;
+  /**
+   * Anime-specific preferred audio language. "" = use the global default;
+   * "auto"/"original" = keep MPV default; otherwise a loose lang value.
+   */
+  animeAudioLanguage: string;
+  /** When true, rank sources and surface a "Play Best Source" affordance. */
+  autoSelectSource: boolean;
+  /**
+   * When true, automatically launch the best ranked source in MPV once sources
+   * load for a movie/selected episode (no click needed). Depends on ranking.
+   */
+  autoPlayBestSource: boolean;
+  /** Quality the auto-selector targets. */
+  preferredSourceQuality: PreferredSourceQuality;
+  /** When true, CAM/TS sources are deprioritized (last resort only). */
+  hideCamSources: boolean;
 }
 
 /** Per-stream-format capability hints used by the action picker. */

@@ -128,6 +128,12 @@ export interface MpvPayload {
    * back to a language for preferred-language selection.
    */
   subtitles?: Array<{ url: string; lang?: string; name?: string }>;
+  /**
+   * Effective preferred audio language for this playback (renderer-resolved,
+   * accounting for anime vs. global default). "" = no preference. When a
+   * string is provided it overrides the global `audioLanguage` setting.
+   */
+  audioLanguageOverride?: string;
 }
 
 export interface MpvOpenResult {
@@ -343,10 +349,16 @@ export async function openInMpv(payload: MpvPayload): Promise<MpvOpenResult> {
     poster: payload.poster ?? null,
     streamTitle: payload.streamTitle ?? null,
   };
+  // Renderer-resolved audio override (anime vs. global) wins when provided;
+  // otherwise fall back to the global setting.
+  const audioLanguage =
+    typeof payload.audioLanguageOverride === "string"
+      ? payload.audioLanguageOverride
+      : settings.audioLanguage;
   const preferences: MpvPlaybackPreferences = {
     autoEnableSubtitles: settings.autoEnableSubtitles,
     subtitleLanguage: settings.subtitleLanguage,
-    audioLanguage: settings.audioLanguage,
+    audioLanguage,
     subtitleLangByUrl,
   };
   const session = new MpvIpcSession(pipePath, context, preferences);

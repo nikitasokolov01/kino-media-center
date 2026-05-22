@@ -31,6 +31,11 @@ const FALLBACK: AppSettings = {
   autoEnableSubtitles: false,
   subtitleLanguage: "en",
   audioLanguage: "",
+  animeAudioLanguage: "",
+  autoSelectSource: false,
+  autoPlayBestSource: false,
+  preferredSourceQuality: "best",
+  hideCamSources: true,
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
