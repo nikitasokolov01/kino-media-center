@@ -1,12 +1,14 @@
 # libmpv-poc — Headless libmpv proof-of-concept (Approach B)
 
-> **Status: ✅ B-Headless PASSED · ✅ R1 offscreen render-to-PNG PASSED (Windows).**
+> **Status: ✅ B-Headless · ✅ R1 single-frame · ✅ R1B render-loop — all PASSED (Windows).**
 > B-Headless: `libmpv-2.dll` loaded at runtime, version read, URL loaded,
-> `time-pos`/`duration`/`pause` + `file-loaded`/`end-file` events read, clean
-> cleanup. R1 (`render-poc/`): a **real video frame** rendered offscreen via the
-> libmpv render API and saved to `frame.png` (non-blank), clean exit. Next stage
-> is **R1B planning** — continuous frames into an experimental Electron canvas
-> (see `docs/libmpv-native-approach-b.md`); not implemented here.
+> events read, clean cleanup. R1 (`render-poc/`): a **real video frame**
+> rendered offscreen and saved to `frame.png` (non-blank). R1B
+> (`render-loop-poc/`): the **continuous render loop** produced many *changing*
+> frames over several seconds, saved sample PNGs, logged metrics, and exited
+> cleanly. All three are standalone (no Electron). Next stage is **E1 planning**
+> — first Electron canvas experiment (see `docs/libmpv-native-approach-b.md`);
+> not implemented here.
 
 **Isolated experiment. Not part of the Media Center app.** A standalone
 Rust + napi-rs native addon that proves libmpv can be driven from a native Node
@@ -246,7 +248,13 @@ Delete `native\libmpv-poc\render-poc\`, `native\libmpv-poc\vendor\angle\`, and
 A **separate** binary sub-crate at `render-loop-poc/` that proves the libmpv
 render **loop** is stable over several seconds — driven by the render API's
 **update callback** — producing many *changing* frames, logging metrics, and
-saving sample PNGs. Still **offscreen, no window, no Electron**. It does not
+saving sample PNGs. Still **offscreen, no window, no Electron**.
+
+> **✅ RESULT: PASSED on Windows.** Rendered multiple changing frames over
+> several seconds, saved sample PNGs, logged metrics, and exited cleanly. The
+> continuous pipeline is validated. Next stage (E1) draws these frames into a
+> canvas inside a gated, experimental Electron page — planned in
+> `docs/libmpv-native-approach-b.md`, not implemented yet. It does not
 touch `render-poc/`, the headless addon, `src/**`, `electron/**`, or the app.
 Same deps as `render-poc` (`libloading`, `khronos-egl`, `png`); reuses
 `vendor\libmpv\libmpv-2.dll` and `vendor\angle\` (set up earlier).

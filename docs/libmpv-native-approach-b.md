@@ -516,3 +516,136 @@ is an acceptable outcome that informs the next step.
 ## Guardrails (unchanged)
 External MPV remains default/fallback; experiment additive + gated + removable;
 no debrid; no torrent; and **no code is written in this planning step.**
+
+---
+
+## ✅ R1B RESULT — standalone render-loop PASSED on Windows
+
+Confirmed by the user: the standalone `render-loop-poc` rendered **multiple
+changing frames** over several seconds, saved sample PNGs, logged metrics, and
+exited cleanly. This validates the **continuous** pipeline end-to-end offscreen:
+the render update callback fires, the loop produces many frames, frames change
+(not static), it runs for the full duration without crashing, and cleanup is
+clean.
+
+Built form: `native/libmpv-poc/render-loop-poc/` (separate sibling crate; deps
+`libloading` + `khronos-egl` + `png`; reuses `vendor/libmpv` + `vendor/angle`).
+`render-poc`, the headless addon, and the app remained untouched.
+
+**Proven so far:** B-Headless ✅, R1 single-frame ✅, R1B continuous loop ✅ —
+all **standalone, no Electron**. The next step is the first time we touch the
+app: get these frames onto a canvas inside an Electron page, behind a flag.
+
+---
+
+# Stage E1 — First Electron canvas experiment (PLANNING ONLY)
+
+**This is the first stage that would touch `src/**` and `electron/**`** — and
+only as **new, additive, flag-gated** files on a dedicated route. Nothing here
+is implemented yet; this section is the spec to approve. External MPV stays the
+default/fallback; no changes to source ranking, profiles, library, Continue
+Watching, regular MPV playback, subtitles, or debrid/torrent.
+
+## Scope (minimal first version)
+- Route **`/experimental-embedded-player`**, reachable only when the setting
+  **`experimentalEmbeddedPlayer`** is on (default **off**).
+- The page: a URL input (defaults to a known direct sample), Start/Stop, a
+  `<canvas>`, and a small FPS / frame-timing readout.
+- Pipeline: a native libmpv renderer (graduated from the PoCs) opens the URL,
+  runs the update-callback render loop into an offscreen FBO, and exposes the
+  **latest RGBA frame**; the renderer draws it to the canvas.
+- **Explicitly out of scope:** subtitles, audio menus, Continue Watching, the
+  source picker, progress tracking, and any change to external MPV.
+
+## IPC / data path
+```
+libmpv (native render loop, offscreen FBO)
+   │  RGBA bytes (width*height*4, stride width*4, top-left, RGBA order)
+   ▼
+native N-API addon  (start(url) / stop() / getLatestFrame() -> {width,height,rgba:Buffer})
+   │  loaded in the Electron MAIN process by a NEW isolated module
+   ▼
+electron/embeddedMpvExperimental.ts   (owns the addon; single instance; teardown)
+   │  IPC handlers on NEW channels: embedded:start, embedded:stop, embedded:get-frame
+   ▼
+electron/preload.ts   (contextBridge: window.embeddedMpv.{start,stop,getFrame})
+   │
+   ▼
+renderer page  src/pages/ExperimentalEmbeddedPlayerPage.tsx
+   │  requestAnimationFrame loop: getFrame() -> ImageData -> ctx.putImageData()
+   ▼
+<canvas>  (+ FPS / ms-per-frame overlay)
+```
+Notes:
+- **Pull model** for v1: the renderer calls `getFrame()` once per
+  `requestAnimationFrame`; the addon returns the most recent frame (or a "no new
+  frame" flag so we skip redundant draws). Simple, naturally rate-limited to the
+  display, and easy to reason about. (A push model via `webContents.send` is a
+  later option.)
+- The addon returns a `Buffer`/`Uint8Array` view of the RGBA bytes; the renderer
+  wraps it in `new ImageData(new Uint8ClampedArray(buf), w, h)` for
+  `putImageData` (v1), or uploads via `texImage2D` for the WebGL variant.
+- One active embedded session at a time; `stop()` and page-unmount tear it down.
+
+## Performance risks
+- **Raw RGBA copies:** each frame crosses the native→main→renderer boundary as a
+  byte buffer. 720p ≈ 3.5 MB/frame, 1080p ≈ 8.3 MB, 4K ≈ 33 MB. At 30–60 fps
+  that's hundreds of MB/s of copying + GC pressure. Mitigations for v1: cap
+  resolution (e.g. 720p) and fps, and skip the draw when no new frame.
+- **`putImageData` vs WebGL upload:** `putImageData` is the simplest but is a
+  CPU, main-thread blit — fine at 480p/720p, strains at 1080p+. **WebGL**
+  (`texSubImage2D` + a full-screen quad) moves the work to the GPU and scales
+  far better; it's the planned upgrade once v1 proves the path. (The R1B metrics
+  — fps, avg ms/frame, approx skipped — will tell us how close the copy path is
+  to acceptable.)
+- **4K:** not a v1 target via the copy path; it's the case that most argues for
+  the zero-copy texture-handle route (A3/R2) later.
+- **Boundary cost:** returning a fresh `Buffer` each call allocates; reusing a
+  pre-allocated buffer or shared memory (A2) is the next optimization if needed.
+
+## Exact files that WOULD change (when approved — not yet)
+Native (graduate the PoC into a real, still-isolated addon):
+- `native/libmpv-poc/src/lib.rs` — add `start(url)`, `stop()`,
+  `getLatestFrame()` (reusing the R1/R1B EGL/GL/render-loop code on a worker
+  thread), plus the update-callback loop.
+- `native/libmpv-poc/Cargo.toml` — add the `khronos-egl` + `png`(optional) deps
+  the render code uses (the headless addon currently only needs `libloading`).
+
+Electron main (all NEW / additive; `electron/mpv.ts` & `mpvIpc.ts` untouched):
+- `electron/embeddedMpvExperimental.ts` — NEW: load the addon, own the single
+  session, expose start/stop/get-frame.
+- `electron/ipc-channels.ts` — add `EmbeddedStart`, `EmbeddedStop`,
+  `EmbeddedGetFrame` channel constants.
+- `electron/main.ts` — register the three handlers (gated; no effect unless used).
+- `electron/preload.ts` — add a `window.embeddedMpv` bridge (start/stop/getFrame).
+
+Renderer (NEW page + minimal wiring; existing pages untouched):
+- `src/pages/ExperimentalEmbeddedPlayerPage.tsx` — NEW: URL input, Start/Stop,
+  `<canvas>`, rAF draw loop, FPS/ms overlay.
+- `src/App.tsx` — add the `/experimental-embedded-player` route (gated).
+- Settings flag `experimentalEmbeddedPlayer` (default off): `electron/db.ts`
+  (`AppSettings` + DEFAULTS + get/update), `src/core/player/types.ts`
+  (`AppSettings`), `src/state/SettingsContext.tsx` (FALLBACK), `electron/preload.ts`
+  (settings.update type), and a toggle in `src/pages/SettingsPage.tsx` under an
+  "Experimental" note.
+
+Untouched: `StreamCard`, `SourcesSection`, `MediaPage`, `sourceRanking`,
+subtitle code, profiles, library, Continue Watching, `playSource`, external MPV.
+
+## E1 success criteria
+With the flag on, opening `/experimental-embedded-player` and pressing Start
+shows **moving libmpv video** in the canvas from a direct URL, with a live
+FPS/frame-timing readout, and Stop/unmount cleans up. With the flag **off**, the
+app is byte-for-byte today's behavior and external MPV is unaffected. An honest
+"the copy/`putImageData` path is too costly at 1080p → switch to WebGL upload or
+shared memory next" is an acceptable, informative outcome.
+
+## Rollback
+Remove the new files + the one settings flag (and the route line); because
+everything is additive and gated, deletion returns the app to its current state.
+No DB migration (the flag is one additive `app_settings` key/value; absent →
+off).
+
+## Guardrails (unchanged)
+External MPV remains default/fallback; experiment additive + gated + removable;
+no debrid; no torrent; and **no code is written in this planning step.**
