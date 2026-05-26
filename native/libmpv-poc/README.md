@@ -238,3 +238,65 @@ cargo --version
 ### Rollback
 Delete `native\libmpv-poc\render-poc\`, `native\libmpv-poc\vendor\angle\`, and
 `frame.png`. Nothing else changes; the headless PoC and the app are untouched.
+
+---
+
+# R1B render-loop PoC (continuous frames, standalone)
+
+A **separate** binary sub-crate at `render-loop-poc/` that proves the libmpv
+render **loop** is stable over several seconds — driven by the render API's
+**update callback** — producing many *changing* frames, logging metrics, and
+saving sample PNGs. Still **offscreen, no window, no Electron**. It does not
+touch `render-poc/`, the headless addon, `src/**`, `electron/**`, or the app.
+Same deps as `render-poc` (`libloading`, `khronos-egl`, `png`); reuses
+`vendor\libmpv\libmpv-2.dll` and `vendor\angle\` (set up earlier).
+
+### Build + run
+
+```powershell
+cd "native\libmpv-poc\render-loop-poc"
+cargo run --release -- "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4"
+```
+
+Runs ~8 seconds and writes `frame_001.png`, `frame_030.png`, `frame_060.png`, …
+into `render-loop-poc\`.
+
+### Expected success output
+
+```
+[loop-poc] EGL initialized: 1.5
+[loop-poc] EGL pbuffer + GLES context current
+[loop-poc] FBO 1280x720 ready
+[loop-poc] libmpv loaded: mpv 0.xx.0 ...
+[loop-poc] render context created (update callback installed)
+[loop-poc] file-loaded
+[loop-poc] saved frame_001.png (90% non-black)
+[loop-poc] saved frame_030.png (91% non-black)
+...
+[loop-poc] ---- metrics ----
+[loop-poc] rendered 312 frames in 8.0s (~39 fps), avg 5.6 ms/frame
+[loop-poc] update signals: 480, rendered: 312, approx skipped: 168
+[loop-poc] distinct frames (by checksum): 300/312
+[loop-poc] non-black: min 88% max 94%
+[loop-poc] saved 10 PNG(s)
+[loop-poc] SUCCESS ✅  loop stable, frames changing, PNGs non-blank, clean exit.
+```
+
+Success = ran the full duration without crashing, `frames >= 30`, distinct
+(changing) frames `> 1`, PNGs non-blank, clean exit 0. Eyeball a couple of the
+saved PNGs — they should show **different** moments of the video.
+
+### If it fails — what to paste back
+- **Rust compile error** (`error[E…]`): paste the lines. Most likely a
+  `khronos-egl` method name or the render-callback signature differs in your
+  installed version.
+- **`distinct frames` is 1** (static): paste the metrics; the update callback may
+  not be firing, or we're re-reading a stale FBO — fixable.
+- **`approx skipped` very high / low fps**: paste metrics; informs whether the
+  copy/readback path needs WebGL/shared-memory later.
+- **blank PNGs / `glGetError` lines / crash**: paste the full output and where it
+  stopped.
+
+### Rollback
+Delete `native\libmpv-poc\render-loop-poc\` and its `frame_*.png`. Nothing else
+changes; `render-poc`, the headless PoC, and the app are untouched.

@@ -1,0 +1,30 @@
+# R1B continuous render-loop proof-of-concept (Approach B, Stage R1B).
+#
+# SEPARATE binary sub-crate — does NOT touch the headless addon (../Cargo.toml,
+# ../src/lib.rs) or render-poc (../render-poc), and is not wired into Electron or
+# the app. It loads libmpv-2.dll at runtime (libloading), creates an OFFSCREEN
+# GLES context via ANGLE/EGL (no window), drives the libmpv render API via its
+# update callback, renders many frames over several seconds, proves frames are
+# changing, logs metrics, and saves sample PNGs.
+#
+# Deps are identical to render-poc (no new dependencies). Reuses
+# ../vendor/libmpv/libmpv-2.dll and ../vendor/angle/{libEGL,libGLESv2}.dll.
+
+[package]
+name = "libmpv-render-loop-poc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Offscreen libmpv render-loop PoC (ANGLE EGL pbuffer). Not part of the app."
+
+[[bin]]
+name = "render_loop_poc"
+path = "src/main.rs"
+
+[dependencies]
+libloading = "0.8"
+khronos-egl = { version = "6", features = ["dynamic"] }
+png = "0.17"
+
+[profile.release]
+opt-level = 2

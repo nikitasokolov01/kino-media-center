@@ -1,7 +1,8 @@
 # Rust build output
 /target
-# render PoC build output + result image
+# render PoC build output + result images
 /render-poc/target
+/render-loop-poc/target
 frame.png
 *.png
 
