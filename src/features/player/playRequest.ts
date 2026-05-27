@@ -13,6 +13,7 @@
 
 import { playWithMpv } from "../../core/player/mpvExternal.js";
 import { collectSubtitles } from "./subtitles.js";
+import { setEmbeddedPlayRequest } from "./embeddedRequest.js";
 import type {
   MpvOpenResult,
   PlayableStreamPayload,
@@ -96,7 +97,7 @@ export async function dispatchPlayRequest(
     case "external-mpv":
       return dispatchExternalMpv(req, options);
     case "embedded-mpv-experimental":
-      return dispatchEmbeddedExperimental(req);
+      return Promise.resolve(dispatchEmbeddedExperimental(req));
     default:
       return { ok: false, error: `Unknown backend: ${String(req.backend)}` };
   }
@@ -153,21 +154,13 @@ async function dispatchExternalMpv(
   };
 }
 
-async function dispatchEmbeddedExperimental(
+function dispatchEmbeddedExperimental(
   req: PlayRequest,
-): Promise<DispatchResult> {
-  const api = window.embeddedMpv;
-  if (!api) {
-    return {
-      ok: false,
-      error:
-        "Embedded player bridge is unavailable (window.embeddedMpv missing).",
-    };
-  }
-  try {
-    const res = await api.start(req.streamUrl);
-    return { ok: res.ok, error: res.error };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
+): DispatchResult {
+  // E3: The overlay owns the IPC lifecycle (api.start/stop). The dispatcher
+  // only pushes the request to the store; EmbeddedPlayerOverlay picks it up
+  // via subscription and calls api.start() inside its own useEffect. No
+  // navigation — the overlay appears over the current page.
+  setEmbeddedPlayRequest(req);
+  return { ok: true };
 }

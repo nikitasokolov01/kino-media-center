@@ -125,7 +125,7 @@ export default function StreamCard({
   const [open, setOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
-  const [launching, setLaunching] = useState<"mpv" | "browser" | null>(null);
+  const [launching, setLaunching] = useState<"mpv" | "browser" | "embedded" | null>(null);
   const [copied, setCopied] = useState(false);
 
   // Auto-clear the success message a few seconds after it shows so the card
@@ -291,6 +291,49 @@ export default function StreamCard({
     }
   }
 
+  // ---- Experimental embedded playback (E2, gated by experimentalEmbeddedPlayer) ----
+  async function handlePlayEmbedded(e: MouseEvent) {
+    stop(e);
+    if (launching !== null) return;
+    setActionError(null);
+    setActionSuccess(null);
+    if (!s.url) {
+      setActionError("Stream has no direct URL.");
+      return;
+    }
+    setLaunching("embedded");
+    try {
+      const req = buildPlayRequest(
+        {
+          backend: "embedded-mpv-experimental",
+          type,
+          mediaId,
+          playableId,
+          mediaTitle,
+          episodeTitle,
+          season,
+          episode,
+          streamUrl: s.url,
+          streamTitle: s.title,
+          streamName: s.name,
+          poster: mediaPoster,
+        },
+        "manual",
+      );
+      const res = await dispatchPlayRequest(req, { origin: "manual" });
+      if (res.ok) {
+        onPlayed?.();
+        setActionSuccess("Opening in embedded player…");
+      } else {
+        setActionError(
+          res.error ?? "Failed to start embedded player.",
+        );
+      }
+    } finally {
+      setLaunching(null);
+    }
+  }
+
   // ---- Copy stream URL (debugging aid) ------------------------------------
   async function handleCopyUrl(e: MouseEvent) {
     stop(e);
@@ -426,18 +469,43 @@ export default function StreamCard({
               {launching === "mpv" ? "Launching MPV…" : "Play with MPV"}
             </button>
           );
+          const embeddedBtnBrowser = settings.experimentalEmbeddedPlayer ? (
+            <button
+              type="button"
+              className="stream-card__action stream-card__action--embedded"
+              onClick={handlePlayEmbedded}
+              disabled={launching !== null}
+              title="Play in the experimental embedded canvas player"
+            >
+              {launching === "embedded" ? "Starting…" : "⬡ Play Embedded"}
+            </button>
+          ) : null;
           return (
             <>
               {promoted}
               {demoted}
+              {embeddedBtnBrowser}
             </>
           );
         }
         // Default: MPV primary, browser secondary only when format is safe.
+        // Embedded experimental button appended when the flag is on.
+        const embeddedBtn = settings.experimentalEmbeddedPlayer ? (
+          <button
+            type="button"
+            className="stream-card__action stream-card__action--embedded"
+            onClick={handlePlayEmbedded}
+            disabled={launching !== null}
+            title="Play in the experimental embedded canvas player"
+          >
+            {launching === "embedded" ? "Starting…" : "⬡ Play Embedded"}
+          </button>
+        ) : null;
         return (
           <>
             {mpvBtn}
             {browserViable && browserBtn}
+            {embeddedBtn}
           </>
         );
       default:

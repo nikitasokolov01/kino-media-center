@@ -2371,6 +2371,147 @@ a:hover { text-decoration: underline; }
   font-weight: 600;
 }
 
+/* ─── Embedded player overlay (E3) ─────────────────────────────────────── */
+.emb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.emb-overlay__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.emb-overlay__close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 10px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.emb-overlay__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.emb-overlay__title-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.emb-overlay__title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.emb-overlay__status {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.emb-overlay__banner {
+  margin: 8px 14px 0;
+  flex-shrink: 0;
+}
+
+.emb-overlay__stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 0;
+  background: #000;
+}
+
+.emb-overlay__loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  font-size: 13px;
+}
+
+.emb-overlay__canvas {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.emb-overlay__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.emb-overlay__ctrl {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 5px 12px;
+  transition: background 0.15s;
+}
+.emb-overlay__ctrl:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+.emb-overlay__ctrl:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.emb-overlay__ctrl--stop {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.emb-overlay__ctrl--stop:hover {
+  background: rgba(var(--accent-rgb, 255, 80, 80), 0.12);
+}
+
+.emb-overlay__ctrl-note {
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.emb-overlay__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
 /* Experimental embedded player page */
 .exp-badge {
   display: inline-block;

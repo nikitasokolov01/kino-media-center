@@ -9,6 +9,7 @@ import SettingsPage from "./pages/SettingsPage.js";
 import LibraryPage from "./pages/LibraryPage.js";
 import ProfilePicker from "./pages/ProfilePicker.js";
 import ExperimentalEmbeddedPlayerPage from "./pages/ExperimentalEmbeddedPlayerPage.js";
+import EmbeddedPlayerOverlay from "./components/EmbeddedPlayerOverlay.js";
 import SearchBox from "./components/SearchBox.js";
 import ProfileAvatar from "./components/ProfileAvatar.js";
 import NowPlayingBar from "./components/NowPlayingBar.js";
@@ -45,6 +46,7 @@ function AppInner() {
   }
 
   return (
+    <>
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">Media Center</div>
@@ -111,5 +113,7 @@ function AppInner() {
       </main>
       <NowPlayingBar />
     </div>
+    {embeddedEnabled && <EmbeddedPlayerOverlay />}
+    </>
   );
 }
