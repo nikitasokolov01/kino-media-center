@@ -15,6 +15,10 @@ episode selection for series, stream source picking, MPV external playback,
 multiple profiles, a profile-specific Library/Watchlist, watched/unwatched
 state, Continue Watching, and MPV JSON-IPC watch-progress tracking.
 
+**Active branch `experiment/libmpv-native`** also has an experimental embedded
+libmpv canvas player (gated behind `experimentalEmbeddedPlayer` flag). External
+MPV remains the default/fallback. See section 10 and handoff doc for details.
+
 ## 2. Tech Stack (from package.json)
 
 - **Electron** ^32 (main process; `dist-electron/electron/main.js` entry)
@@ -40,7 +44,9 @@ state, Continue Watching, and MPV JSON-IPC watch-progress tracking.
 - `src/core/player/` — backend abstraction: `types.ts`, `playerBackends.ts`,
   `browserPlayer.ts`, `mpvExternal.ts` (renderer-side wrapper over electronAPI).
 - `src/features/player/` — browser player support: `playability.ts`,
-  `store.ts` (pending stream), `types.ts`.
+  `store.ts` (pending stream), `types.ts`. Also: `useEmbeddedPlayback.ts`
+  (hook owning embedded IPC + RAF loop, E4), `embeddedRequest.ts` (store/event
+  bus for the overlay), `playRequest.ts` (PlayRequest dispatch boundary).
 - `src/state/` — React contexts: Profile, Settings, Library, Toast, ContextMenu.
 - `src/pages/` — Home, Search, Library, Media, ExpandedCatalog, Player,
   Settings, ProfilePicker, Addons.
@@ -92,6 +98,12 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
   Next Up / Continue Watching.
 - **Library badges** — not started / watching / watched.
 - **Browser player** — secondary HTML5 + hls.js player (PlayerPage).
+- **Experimental embedded MPV overlay** (branch `experiment/libmpv-native`, gated
+  behind `experimentalEmbeddedPlayer` flag): libmpv renders frames offscreen via
+  ANGLE EGL, copies RGBA pixels to a `<canvas>` in a full-screen overlay. Supports
+  real app sources (movies + episodes) via "⬡ Play Embedded" on StreamCards.
+  E4 controls: play/pause, seek, volume, subtitle/audio track selection.
+  External MPV remains the default/fallback and is completely unaffected.
 
 ## 4. Important Architecture Rules
 
@@ -119,9 +131,18 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
 - **externalUrl** (no url) → show "Open External" (opens in OS browser).
 - **ytId** → "YouTube Source" (not played in-app currently).
 - Do not build torrent resolving unless explicitly requested.
-- Do not fake embedded MPV with iframe/webview. True embedded MPV would need a
-  native window handle / libmpv / render-API native addon — future research
-  only (see `playerBackends.ts` for staged backend notes).
+- Do not fake embedded MPV with iframe/webview.
+- The experimental embedded player (`backend: "embedded-mpv-experimental"`) uses
+  a real libmpv render-API native addon (`native/embedded-mpv/`, napi-rs). It is
+  gated behind `experimentalEmbeddedPlayer` and is **not** the default. External
+  MPV (`backend: "external-mpv"`) is the default for direct URLs and must not
+  be changed unless explicitly requested.
+- The `PlayRequest` type in `src/core/player/types.ts` carries a `backend` field
+  that routes to the correct player. `dispatchPlayRequest` in
+  `src/features/player/playRequest.ts` is the single dispatch point.
+- Embedded addon controls (pause/seek/volume/tracks) are sent via an mpsc channel
+  to the render thread via `window.embeddedMpv.command(type, value)`. State is
+  polled via `window.embeddedMpv.getState()` every 250 ms while running.
 
 ### Project decision — NO debrid
 
@@ -170,15 +191,60 @@ addons return and plays direct HTTP/HTTPS URLs through MPV.
 
 ## 9. Future Roadmap
 
-- Subtitle support
+- Subtitle support (external MPV)
 - Source filtering/sorting (only if needed later)
 - Addon management polish
 - Better MPV IPC controls (pause/seek from the app — "Custom MPV arguments"
   setting is already TODO'd in `electron/mpv.ts`)
-- Optional embedded MPV research (native handle / libmpv / render API)
 - Packaging/bundling MPV with the app
 - Settings polish
 - Theme / UI polish
 - Performance for large catalogs and long anime seasons
 
 (Debrid integration is intentionally **not** on the roadmap.)
+
+## 10. Experimental Embedded MPV (branch: experiment/libmpv-native)
+
+This section describes the embedded canvas player that exists on this branch.
+Do **not** merge to main or remove external MPV unless explicitly decided.
+
+### Architecture
+- **Flag**: `experimentalEmbeddedPlayer` in `app_settings` (default `false`).
+  Toggle in Settings → Experimental. All embedded code is gated on this flag.
+- **Overlay**: `src/components/EmbeddedPlayerOverlay.tsx` — app-level component
+  rendered outside `.app-shell` in `App.tsx`. Appears over the current page
+  when a `PlayRequest` with `backend: "embedded-mpv-experimental"` is dispatched.
+- **Hook**: `src/features/player/useEmbeddedPlayback.ts` — owns the full IPC +
+  RAF lifecycle, state polling, and control helpers. StrictMode-safe via
+  `cancelledRef` pattern.
+- **Store**: `src/features/player/embeddedRequest.ts` — module-level store +
+  event bus. `dispatchEmbeddedExperimental` pushes here; the overlay subscribes.
+- **Dispatch**: `dispatchEmbeddedExperimental` in `playRequest.ts` only calls
+  `setEmbeddedPlayRequest(req)` — no navigation, no IPC. The overlay owns IPC.
+- **Native addon**: `native/embedded-mpv/` (Rust + napi-rs). Built separately:
+  `cd native/embedded-mpv && npm install && npm run build`. Requires
+  `vendor/libmpv-2.dll`, `vendor/libEGL.dll`, `vendor/libGLESv2.dll`.
+- **IPC channels** (all in `ipc-channels.ts`): `embedded:start`, `embedded:stop`,
+  `embedded:get-frame`, `embedded:command` (E4), `embedded:get-state` (E4).
+
+### E4 Control API
+- `window.embeddedMpv.command(type, value)` — fire-and-forget to render thread
+  via mpsc channel. Types: `"pause"` (1/0), `"seek"` (seconds), `"volume"`
+  (0-130), `"sid"` (track id, -1=off), `"aid"` (track id).
+- `window.embeddedMpv.getState()` → `EmbeddedPlaybackState` — reads from a
+  Mutex updated by the render thread every ~200 ms. Fields: `paused`, `timePos`,
+  `duration`, `volume`, `trackListJson` (JSON from mpv's `track-list` property).
+
+### Known limitations / TODO
+- Native render resolution is fixed 1280×720 (W/H constants in `lib.rs`).
+- No watch_progress writes for embedded playback.
+- No subtitle auto-loading from addons/OpenSubtitles (only mpv's loaded tracks).
+- No pause/seek keyboard IPC for the standalone test page (only overlay has it).
+- Canvas uses copy-based frame transfer (native → main → renderer) — may be
+  choppy at high frame rates.
+
+### Guardrails
+- Do **not** touch `electron/mpv.ts`, `electron/mpvIpc.ts`, external-mpv dispatch.
+- Do **not** touch source picker, subtitles/audio collectors for external MPV,
+  profiles, library, Continue Watching, database, debrid/torrent.
+- Embedded is **never** the default. External MPV is always the fallback.

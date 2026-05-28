@@ -2371,7 +2371,7 @@ a:hover { text-decoration: underline; }
   font-weight: 600;
 }
 
-/* ─── Embedded player overlay (E3) ─────────────────────────────────────── */
+/* ─── Embedded player overlay (E4) ─────────────────────────────────────── */
 .emb-overlay {
   position: fixed;
   inset: 0;
@@ -2380,34 +2380,20 @@ a:hover { text-decoration: underline; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  color: #fff;
 }
 
+/* ── Header bar ── */
 .emb-overlay__header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.05);
-  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
+  min-height: 0;
 }
-
-.emb-overlay__close {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-size: 14px;
-  cursor: pointer;
-  padding: 4px 10px;
-  line-height: 1;
-  flex-shrink: 0;
-  transition: background 0.15s;
-}
-.emb-overlay__close:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
 .emb-overlay__title-area {
   display: flex;
   align-items: center;
@@ -2415,101 +2401,194 @@ a:hover { text-decoration: underline; }
   flex: 1;
   min-width: 0;
 }
-
 .emb-overlay__title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text);
+  color: #fff;
 }
-
 .emb-overlay__status {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.emb-overlay__close {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 3px 9px;
+  line-height: 1.4;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.emb-overlay__close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
 }
 
+/* ── Error banners ── */
 .emb-overlay__banner {
-  margin: 8px 14px 0;
+  margin: 6px 12px 0;
   flex-shrink: 0;
 }
 
+/* ── Canvas stage — fills remaining vertical space ── */
 .emb-overlay__stage {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   position: relative;
   min-height: 0;
   background: #000;
+  overflow: hidden;
 }
 
+/* Loading indicator centred in stage */
 .emb-overlay__loading {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  font-size: 13px;
-}
-
-.emb-overlay__canvas {
-  max-width: 100%;
-  max-height: 100%;
-  display: block;
-  object-fit: contain;
-}
-
-.emb-overlay__controls {
+  inset: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border-top: 1px solid var(--border);
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/*
+ * Canvas sizing (Part 1 — responsive, aspect-ratio-preserving):
+ * The canvas pixel buffer is set to 1280×720 by the Rust addon (W/H constants).
+ * We set the CSS display size to fill the stage while preserving aspect ratio.
+ * width/height 100% makes it fill the stage box; object-fit: contain then
+ * letter-boxes the image without stretching it.
+ * The canvas is a CSS replaced element, so object-fit works correctly.
+ */
+.emb-overlay__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* ── Control bar — overlaid at bottom of stage ── */
+.emb-overlay__controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
+  /* Gradient taller than the bar so the video is still visible above it */
+  padding-top: 28px;
+}
+
+/* Play/Pause + mute icon buttons */
+.emb-overlay__ctrl {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+.emb-overlay__ctrl:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.emb-overlay__ctrl:disabled,
+.emb-overlay__ctrl--disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+.emb-overlay__ctrl--icon {
+  font-size: 16px;
+  padding: 2px 6px;
+}
+.emb-overlay__ctrl--stop {
+  border: 1px solid rgba(255, 80, 80, 0.6);
+  color: rgba(255, 120, 120, 0.9);
+  padding: 4px 10px;
+  margin-left: 4px;
+}
+.emb-overlay__ctrl--stop:hover {
+  background: rgba(255, 80, 80, 0.15);
+  color: #ff8080;
+  border-color: #ff8080;
+}
+
+/* Time labels */
+.emb-overlay__time {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+}
+.emb-overlay__time--dur {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Seek / scrub bar */
+.emb-overlay__progress {
+  flex: 1;
+  min-width: 60px;
+  height: 4px;
+  accent-color: var(--accent, #e05);
+  cursor: pointer;
+}
+.emb-overlay__progress:hover {
+  height: 6px;
+}
+
+/* Volume slider */
+.emb-overlay__volume {
+  width: 72px;
+  height: 4px;
+  accent-color: var(--accent, #e05);
+  cursor: pointer;
   flex-shrink: 0;
 }
 
-.emb-overlay__ctrl {
-  background: none;
-  border: 1px solid var(--border);
+/* Track selects (subtitle / audio) */
+.emb-overlay__track-select {
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: var(--radius);
-  color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 5px 12px;
-  transition: background 0.15s;
-}
-.emb-overlay__ctrl:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-}
-.emb-overlay__ctrl:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-.emb-overlay__ctrl--stop {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.emb-overlay__ctrl--stop:hover {
-  background: rgba(var(--accent-rgb, 255, 80, 80), 0.12);
-}
-
-.emb-overlay__ctrl-note {
+  color: rgba(255, 255, 255, 0.8);
   font-size: 12px;
-  margin-left: 4px;
+  padding: 3px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 120px;
+}
+.emb-overlay__track-select:hover {
+  border-color: rgba(255, 255, 255, 0.4);
 }
 
+/* ── Dev stats strip (below stage, always visible for now) ── */
 .emb-overlay__stats {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 6px 14px;
-  border-top: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
-  font-size: 11px;
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.8);
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
   flex-shrink: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 /* Experimental embedded player page */

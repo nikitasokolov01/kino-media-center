@@ -184,6 +184,10 @@ const embeddedMpv = {
   stop: () => ipcRenderer.invoke(IPC.EmbeddedStop),
   getFrame: (sinceIndex: number) =>
     ipcRenderer.invoke(IPC.EmbeddedGetFrame, { sinceIndex }),
+  // E4: control API — fire-and-forget command + state read
+  command: (type: string, value: number) =>
+    ipcRenderer.invoke(IPC.EmbeddedCommand, { type, value }),
+  getState: () => ipcRenderer.invoke(IPC.EmbeddedGetState),
 };
 
 contextBridge.exposeInMainWorld("mediaCenter", api);

@@ -24,6 +24,16 @@ interface EmbeddedAddon {
     rgba?: Buffer | Uint8Array;
     error?: string;
   };
+  // E4: control API
+  sendCommand: (cmdType: string, value: number) => void;
+  getPlaybackState: () => {
+    hasSession: boolean;
+    paused: boolean;
+    timePos: number;
+    duration: number;
+    volume: number;
+    trackListJson: string;
+  };
 }
 
 export interface EmbeddedStartResult {
@@ -179,6 +189,70 @@ export function embeddedGetFrame(sinceIndex: number): EmbeddedFrame {
       width: 0,
       height: 0,
       frameIndex: 0,
+    };
+  }
+}
+
+export interface EmbeddedPlaybackState {
+  hasSession: boolean;
+  paused: boolean;
+  timePos: number;
+  duration: number;
+  volume: number;
+  trackListJson: string;
+}
+
+/**
+ * Send a fire-and-forget control command to the render thread.
+ * cmd_type: "pause" | "seek" | "volume" | "sid" | "aid"
+ * value: 1=pause/0=resume for "pause"; seconds for "seek"; 0-130 for "volume";
+ *        track id (or -1 to disable) for "sid"/"aid".
+ * No-ops when there is no active session.
+ */
+export function embeddedSendCommand(
+  cmdType: string,
+  value: number,
+): { ok: boolean; error?: string } {
+  const a = getAddon();
+  if (!a) return { ok: true }; // no session = no-op, not an error
+  try {
+    a.sendCommand(cmdType, value);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Read the latest playback state from the render thread's shared mutex. */
+export function embeddedGetState(): EmbeddedPlaybackState & {
+  ok: boolean;
+  error?: string;
+} {
+  const a = getAddon();
+  if (!a) {
+    return {
+      ok: true, // not an error: addon may not be built yet
+      hasSession: false,
+      paused: true,
+      timePos: -1,
+      duration: -1,
+      volume: 100,
+      trackListJson: "[]",
+    };
+  }
+  try {
+    const s = a.getPlaybackState();
+    return { ok: true, ...s };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      hasSession: false,
+      paused: true,
+      timePos: -1,
+      duration: -1,
+      volume: 100,
+      trackListJson: "[]",
     };
   }
 }

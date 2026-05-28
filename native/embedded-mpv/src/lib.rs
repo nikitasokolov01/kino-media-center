@@ -1,21 +1,22 @@
-//! EXPERIMENTAL embedded libmpv renderer addon (Stage E1).
+//! EXPERIMENTAL embedded libmpv renderer addon (Stage E1 → E4).
 //!
 //! Runs a libmpv render loop on a BACKGROUND THREAD using an offscreen ANGLE
 //! EGL pbuffer + GLES context (no window). The render thread owns all GL/mpv
 //! objects (GL is thread-affine); it `glReadPixels` each frame into a CPU buffer
-//! stored behind a mutex. The JS thread only ever touches that CPU buffer:
+//! stored behind a mutex. The JS thread only ever touches CPU-side state:
 //!
-//!   start(url, libmpvPath) -> ()        spawn the render thread
-//!   stop()                  -> ()        signal + join + clean up
+//!   start(url, libmpvPath) -> ()           spawn the render thread
+//!   stop()                  -> ()          signal + join + clean up
 //!   getLatestFrame(since)   -> FrameResult
+//!   sendCommand(type, val)  -> ()          E4: fire-and-forget control commands
+//!   getPlaybackState()      -> PlaybackStateResult  E4: state readable by JS thread
+//!
+//! Control commands are sent via an mpsc channel to the render thread (which
+//! owns the mpv handle) and dispatched each render iteration.
 //!
 //! This is NOT the default player. It is loaded by the Electron main process
 //! only for the experimental embedded route. If anything fails, errors are
 //! surfaced through FrameResult.error and the session stops cleanly.
-//!
-//! NOTE: graduated from native/libmpv-poc/render-loop-poc. Authored without a
-//! Windows compiler to hand; if `cargo` errors (likely a `khronos-egl` API name
-//! or the render-callback signature), paste it and we'll adjust.
 
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::{c_char, c_int};
@@ -23,7 +24,7 @@ use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use khronos_egl as egl;
 use libloading::{Library, Symbol};
@@ -46,6 +47,7 @@ const MPV_RENDER_PARAM_FLIP_Y: c_int = 4;
 const MPV_RENDER_UPDATE_FRAME: u64 = 1;
 const MPV_EVENT_NONE: c_int = 0;
 const MPV_EVENT_SHUTDOWN: c_int = 1;
+const MPV_EVENT_FILE_LOADED: c_int = 8;
 
 #[repr(C)]
 struct MpvRenderParam {
@@ -77,6 +79,9 @@ struct MpvEvent {
 type MpvCreate = unsafe extern "C" fn() -> *mut c_void;
 type MpvInitialize = unsafe extern "C" fn(*mut c_void) -> c_int;
 type MpvSetOptionString = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int;
+type MpvSetPropertyString = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int;
+type MpvGetPropertyString = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_char;
+type MpvFree = unsafe extern "C" fn(*mut c_void);
 type MpvCommand = unsafe extern "C" fn(*mut c_void, *const *const c_char) -> c_int;
 type MpvWaitEvent = unsafe extern "C" fn(*mut c_void, f64) -> *mut MpvEvent;
 type MpvTerminateDestroy = unsafe extern "C" fn(*mut c_void);
@@ -112,6 +117,36 @@ const GL_TEXTURE_MIN_FILTER: u32 = 0x2801;
 const GL_TEXTURE_MAG_FILTER: u32 = 0x2800;
 const GL_LINEAR: c_int = 0x2601;
 
+// ---- Control command (JS thread → render thread) ---------------------------
+enum EmbeddedCmd {
+    SetPause(bool),
+    SeekAbsolute(f64),
+    SetVolume(f64),
+    SetSid(i32),  // -1 = disable subtitles
+    SetAid(i32),
+}
+
+// ---- Playback state (render thread writes, JS thread reads) ----------------
+struct PlaybackState {
+    paused: bool,
+    time_pos: f64,         // -1.0 if unknown/before playback
+    duration: f64,         // -1.0 if unknown
+    volume: f64,           // 0–130 (mpv default is 100)
+    track_list_json: String, // raw JSON from mpv track-list property
+}
+
+impl Default for PlaybackState {
+    fn default() -> Self {
+        Self {
+            paused: false,
+            time_pos: -1.0,
+            duration: -1.0,
+            volume: 100.0,
+            track_list_json: "[]".to_string(),
+        }
+    }
+}
+
 // ---- Shared state between the render thread and the JS thread --------------
 struct LatestFrame {
     width: i32,
@@ -122,11 +157,13 @@ struct LatestFrame {
 struct Shared {
     frame: Mutex<LatestFrame>,
     error: Mutex<Option<String>>,
+    state: Mutex<PlaybackState>,
 }
 struct Session {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     shared: Arc<Shared>,
+    cmd_tx: std::sync::mpsc::Sender<EmbeddedCmd>,
 }
 
 // One embedded session at a time.
@@ -136,7 +173,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-// ---- Frame returned to JS --------------------------------------------------
+// ---- napi return types ----------------------------------------------------
 #[napi(object)]
 pub struct FrameResult {
     pub no_new_frame: bool,
@@ -160,13 +197,27 @@ impl FrameResult {
     }
 }
 
+/// Playback state returned to the JS thread via `getPlaybackState()`.
+/// napi-rs converts snake_case → camelCase automatically.
+#[napi(object)]
+pub struct PlaybackStateResult {
+    pub has_session: bool,
+    pub paused: bool,
+    /// Current playback position in seconds. -1 if unknown.
+    pub time_pos: f64,
+    /// Total duration in seconds. -1 if unknown.
+    pub duration: f64,
+    /// Volume 0–130 (mpv scale, 100 = normal).
+    pub volume: f64,
+    /// Raw JSON string of mpv's `track-list` property (array of track objects).
+    pub track_list_json: String,
+}
+
 fn is_http(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
 
-/// Start (or restart) the embedded render session for `url`. `libmpv_path` is
-/// the full path to libmpv-2.dll (the Electron main process resolves it and
-/// ensures the ANGLE DLLs are on PATH first).
+/// Start (or restart) the embedded render session for `url`.
 #[napi]
 pub fn start(url: String, libmpv_path: String) -> Result<()> {
     if !is_http(&url) {
@@ -187,7 +238,10 @@ pub fn start(url: String, libmpv_path: String) -> Result<()> {
             rgba: Vec::new(),
         }),
         error: Mutex::new(None),
+        state: Mutex::new(PlaybackState::default()),
     });
+
+    let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<EmbeddedCmd>();
 
     let shared_thread = shared.clone();
     let stop_thread = stop.clone();
@@ -195,7 +249,7 @@ pub fn start(url: String, libmpv_path: String) -> Result<()> {
         .name("embedded-mpv-render".to_string())
         .spawn(move || {
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                render_main(&url, &libmpv_path, &shared_thread, &stop_thread)
+                render_main(&url, &libmpv_path, &shared_thread, &stop_thread, cmd_rx)
             }));
             match result {
                 Ok(Ok(())) => {}
@@ -209,6 +263,7 @@ pub fn start(url: String, libmpv_path: String) -> Result<()> {
         stop,
         handle: Some(handle),
         shared,
+        cmd_tx,
     });
     Ok(())
 }
@@ -224,15 +279,15 @@ pub fn stop() -> Result<()> {
 fn stop_locked(guard: &mut Option<Session>) {
     if let Some(mut s) = guard.take() {
         s.stop.store(true, Ordering::Release);
+        // Dropping cmd_tx disconnects the channel, waking the render thread.
+        drop(s.cmd_tx);
         if let Some(h) = s.handle.take() {
             let _ = h.join();
         }
     }
 }
 
-/// Get the latest frame if its index is newer than `since_index`. Returns a
-/// `no_new_frame` flag (and no buffer) when nothing newer is available, so the
-/// renderer can skip the big copy on idle frames.
+/// Get the latest frame if its index is newer than `since_index`.
 #[napi]
 pub fn get_latest_frame(since_index: u32) -> FrameResult {
     let guard = lock(&SESSION);
@@ -262,6 +317,65 @@ pub fn get_latest_frame(since_index: u32) -> FrameResult {
         frame_index: f.index as u32,
         rgba: Some(Buffer::from(f.rgba.clone())),
         error: None,
+    }
+}
+
+/// Send a fire-and-forget control command to the render thread.
+///
+/// `cmd_type`:
+///   - `"pause"`  → `value` != 0.0 = pause, 0.0 = resume
+///   - `"seek"`   → seek to absolute `value` seconds
+///   - `"volume"` → set volume (0–130)
+///   - `"sid"`    → set subtitle track id; -1.0 = disable
+///   - `"aid"`    → set audio track id
+///
+/// No-ops when there is no active session (safe to call at any time).
+#[napi]
+pub fn send_command(cmd_type: String, value: f64) -> Result<()> {
+    let guard = lock(&SESSION);
+    if let Some(s) = guard.as_ref() {
+        let cmd = match cmd_type.as_str() {
+            "pause" => EmbeddedCmd::SetPause(value != 0.0),
+            "seek" => EmbeddedCmd::SeekAbsolute(value),
+            "volume" => EmbeddedCmd::SetVolume(value.clamp(0.0, 130.0)),
+            "sid" => EmbeddedCmd::SetSid(value as i32),
+            "aid" => EmbeddedCmd::SetAid(value as i32),
+            _ => {
+                return Err(Error::from_reason(format!(
+                    "unknown embedded command type: {cmd_type}"
+                )))
+            }
+        };
+        let _ = s.cmd_tx.send(cmd); // ignore if render thread has already exited
+    }
+    Ok(())
+}
+
+/// Read the latest playback state written by the render thread.
+/// Cheap: only reads from a Mutex-protected struct; no IPC round-trip.
+#[napi]
+pub fn get_playback_state() -> PlaybackStateResult {
+    let guard = lock(&SESSION);
+    match guard.as_ref() {
+        None => PlaybackStateResult {
+            has_session: false,
+            paused: true,
+            time_pos: -1.0,
+            duration: -1.0,
+            volume: 100.0,
+            track_list_json: "[]".to_string(),
+        },
+        Some(s) => {
+            let st = lock(&s.shared.state);
+            PlaybackStateResult {
+                has_session: true,
+                paused: st.paused,
+                time_pos: st.time_pos,
+                duration: st.duration,
+                volume: st.volume,
+                track_list_json: st.track_list_json.clone(),
+            }
+        }
     }
 }
 
@@ -312,8 +426,9 @@ fn render_main(
     libmpv_path: &str,
     shared: &Arc<Shared>,
     stop: &Arc<AtomicBool>,
+    cmd_rx: std::sync::mpsc::Receiver<EmbeddedCmd>,
 ) -> std::result::Result<(), String> {
-    unsafe { render_main_inner(url, libmpv_path, shared, stop) }
+    unsafe { render_main_inner(url, libmpv_path, shared, stop, cmd_rx) }
 }
 
 unsafe fn render_main_inner(
@@ -321,6 +436,7 @@ unsafe fn render_main_inner(
     libmpv_path: &str,
     shared: &Arc<Shared>,
     stop: &Arc<AtomicBool>,
+    cmd_rx: std::sync::mpsc::Receiver<EmbeddedCmd>,
 ) -> std::result::Result<(), String> {
     // ---- libmpv -----------------------------------------------------------
     let mpvlib = Library::new(libmpv_path)
@@ -328,9 +444,15 @@ unsafe fn render_main_inner(
     let mpv_create: MpvCreate = getsym(&mpvlib, b"mpv_create\0")?;
     let mpv_initialize: MpvInitialize = getsym(&mpvlib, b"mpv_initialize\0")?;
     let mpv_set_option_string: MpvSetOptionString = getsym(&mpvlib, b"mpv_set_option_string\0")?;
+    let mpv_set_property_string: MpvSetPropertyString =
+        getsym(&mpvlib, b"mpv_set_property_string\0")?;
+    let mpv_get_property_string: MpvGetPropertyString =
+        getsym(&mpvlib, b"mpv_get_property_string\0")?;
+    let mpv_free: MpvFree = getsym(&mpvlib, b"mpv_free\0")?;
     let mpv_command: MpvCommand = getsym(&mpvlib, b"mpv_command\0")?;
     let mpv_wait_event: MpvWaitEvent = getsym(&mpvlib, b"mpv_wait_event\0")?;
-    let mpv_terminate_destroy: MpvTerminateDestroy = getsym(&mpvlib, b"mpv_terminate_destroy\0")?;
+    let mpv_terminate_destroy: MpvTerminateDestroy =
+        getsym(&mpvlib, b"mpv_terminate_destroy\0")?;
     let mpv_render_context_create: MpvRenderContextCreate =
         getsym(&mpvlib, b"mpv_render_context_create\0")?;
     let mpv_render_context_set_update_callback: MpvRenderContextSetUpdateCallback =
@@ -426,7 +548,6 @@ unsafe fn render_main_inner(
     set_opt("vo", "libmpv");
     set_opt("hwdec", "no");
     set_opt("network-timeout", "15");
-    // Audio left at default (the embedded player can have sound).
     if mpv_initialize(mpv) < 0 {
         mpv_terminate_destroy(mpv);
         return Err("mpv_initialize failed".to_string());
@@ -472,8 +593,62 @@ unsafe fn render_main_inner(
     let mut index: u64 = 0;
     let fbo_struct = MpvOpenglFbo { fbo: fbo as c_int, w: W, h: H, internal_format: 0 };
 
+    // State polling: update every 200 ms; refresh tracks on FILE_LOADED.
+    let mut last_state_update = Instant::now();
+    let state_interval = Duration::from_millis(200);
+    let mut needs_track_refresh = true; // fetch tracks as soon as possible
+
     while !stop.load(Ordering::Acquire) {
-        // Drain events so decoding progresses; bail on shutdown.
+        // ---- Drain control commands from JS thread ------------------------
+        loop {
+            match cmd_rx.try_recv() {
+                Ok(cmd) => {
+                    let set_prop = |name: &str, val: &str| {
+                        if let (Ok(n), Ok(v)) = (CString::new(name), CString::new(val)) {
+                            mpv_set_property_string(mpv, n.as_ptr(), v.as_ptr());
+                        }
+                    };
+                    match cmd {
+                        EmbeddedCmd::SetPause(b) => {
+                            set_prop("pause", if b { "yes" } else { "no" });
+                        }
+                        EmbeddedCmd::SeekAbsolute(t) => {
+                            let c_seek = CString::new("seek").unwrap();
+                            let c_t = CString::new(format!("{t:.3}")).unwrap();
+                            let c_abs = CString::new("absolute").unwrap();
+                            let argv2: [*const c_char; 4] = [
+                                c_seek.as_ptr(),
+                                c_t.as_ptr(),
+                                c_abs.as_ptr(),
+                                std::ptr::null(),
+                            ];
+                            mpv_command(mpv, argv2.as_ptr());
+                        }
+                        EmbeddedCmd::SetVolume(v) => {
+                            set_prop("volume", &format!("{v:.1}"));
+                        }
+                        EmbeddedCmd::SetSid(id) => {
+                            let sid_owned;
+                            let sid_str = if id < 0 {
+                                "no"
+                            } else {
+                                sid_owned = id.to_string();
+                                sid_owned.as_str()
+                            };
+                            set_prop("sid", sid_str);
+                        }
+                        EmbeddedCmd::SetAid(id) => {
+                            let aid_owned = id.to_string();
+                            set_prop("aid", &aid_owned);
+                        }
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        // ---- Drain mpv events (drive decoder + detect shutdown/fileload) --
         let mut shutdown = false;
         loop {
             let evp = mpv_wait_event(mpv, 0.0);
@@ -486,6 +661,9 @@ unsafe fn render_main_inner(
                     shutdown = true;
                     break;
                 }
+                MPV_EVENT_FILE_LOADED => {
+                    needs_track_refresh = true;
+                }
                 _ => {}
             }
         }
@@ -493,6 +671,67 @@ unsafe fn render_main_inner(
             break;
         }
 
+        // ---- Periodic state update ----------------------------------------
+        let now = Instant::now();
+        if now.duration_since(last_state_update) >= state_interval || needs_track_refresh {
+            last_state_update = now;
+            let do_tracks = needs_track_refresh;
+            needs_track_refresh = false;
+
+            let mut ps = lock(&shared.state);
+
+            // Helper macro: read a string property, parse as f64.
+            macro_rules! read_f64 {
+                ($prop:expr, $default:expr) => {{
+                    match CString::new($prop) {
+                        Ok(n) => {
+                            let ptr = mpv_get_property_string(mpv, n.as_ptr());
+                            if ptr.is_null() {
+                                $default
+                            } else {
+                                let val = CStr::from_ptr(ptr)
+                                    .to_str()
+                                    .unwrap_or("")
+                                    .parse::<f64>()
+                                    .unwrap_or($default);
+                                mpv_free(ptr as *mut c_void);
+                                val
+                            }
+                        }
+                        Err(_) => $default,
+                    }
+                }};
+            }
+
+            ps.time_pos = read_f64!("time-pos", -1.0);
+            ps.duration = read_f64!("duration", -1.0);
+            let raw_vol = read_f64!("volume", 100.0);
+            ps.volume = if raw_vol < 0.0 { 100.0 } else { raw_vol };
+
+            // pause: string property "yes"/"no"
+            if let Ok(n) = CString::new("pause") {
+                let ptr = mpv_get_property_string(mpv, n.as_ptr());
+                if !ptr.is_null() {
+                    ps.paused = CStr::from_ptr(ptr).to_str().unwrap_or("no") == "yes";
+                    mpv_free(ptr as *mut c_void);
+                }
+            }
+
+            // track-list: full JSON (fetch only when needed)
+            if do_tracks {
+                if let Ok(n) = CString::new("track-list") {
+                    let ptr = mpv_get_property_string(mpv, n.as_ptr());
+                    if !ptr.is_null() {
+                        if let Ok(s) = CStr::from_ptr(ptr).to_str() {
+                            ps.track_list_json = s.to_string();
+                        }
+                        mpv_free(ptr as *mut c_void);
+                    }
+                }
+            }
+        }
+
+        // ---- Render frame if one is pending --------------------------------
         if frame_pending.swap(false, Ordering::AcqRel) {
             let flags = mpv_render_context_update(rctx);
             if flags & MPV_RENDER_UPDATE_FRAME != 0 {
@@ -517,16 +756,14 @@ unsafe fn render_main_inner(
                     local.as_mut_ptr() as *mut c_void,
                 );
 
-                // glReadPixels returns rows in bottom-up order (OpenGL
-                // bottom-left origin). canvas ImageData expects top-left
-                // origin. Flip rows in-place so the canvas renders upright.
+                // glReadPixels returns rows bottom-up (OpenGL convention).
+                // canvas ImageData expects top-left origin. Flip rows in-place.
                 {
                     let stride = (W * 4) as usize;
                     let height = H as usize;
                     for row in 0..(height / 2) {
                         let top = row * stride;
                         let bot = (height - 1 - row) * stride;
-                        // split_at_mut requires bot > top, which holds here.
                         let (lo, hi) = local.split_at_mut(bot);
                         lo[top..top + stride].swap_with_slice(&mut hi[..stride]);
                     }
@@ -555,6 +792,6 @@ unsafe fn render_main_inner(
     let _ = egl.destroy_context(display, context);
     let _ = egl.destroy_surface(display, surface);
     let _ = egl.terminate(display);
-    drop(frame_pending); // ensure the callback's Arc outlived the render context
+    drop(frame_pending);
     Ok(())
 }

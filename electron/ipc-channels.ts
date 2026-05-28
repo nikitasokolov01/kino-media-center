@@ -39,6 +39,9 @@ export const IPC = {
   EmbeddedStart: "embedded:start",
   EmbeddedStop: "embedded:stop",
   EmbeddedGetFrame: "embedded:get-frame",
+  // E4 control API — fire-and-forget command + state read
+  EmbeddedCommand: "embedded:command",
+  EmbeddedGetState: "embedded:get-state",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

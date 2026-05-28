@@ -47,6 +47,8 @@ import {
   embeddedStart,
   embeddedStop,
   embeddedGetFrame,
+  embeddedSendCommand,
+  embeddedGetState,
   embeddedShutdown,
 } from "./embeddedMpvExperimental.js";
 import type { AppSettings } from "./db.js";
@@ -337,6 +339,14 @@ function registerIpcHandlers() {
     async (_e, args: { sinceIndex: number }) =>
       embeddedGetFrame(args?.sinceIndex ?? 0),
   );
+  // E4: fire-and-forget control command (pause/seek/volume/sid/aid)
+  ipcMain.handle(
+    IPC.EmbeddedCommand,
+    async (_e, args: { type: string; value: number }) =>
+      embeddedSendCommand(args?.type ?? "", args?.value ?? 0),
+  );
+  // E4: read playback state (time-pos, duration, paused, volume, track-list JSON)
+  ipcMain.handle(IPC.EmbeddedGetState, async () => embeddedGetState());
 
   // Dev-only: insert a synthetic addon whose endpoints will fail to fetch,
   // to verify graceful per-row/per-page failure handling end-to-end. Gated to
