@@ -42,6 +42,9 @@ export const IPC = {
   // E4 control API — fire-and-forget command + state read
   EmbeddedCommand: "embedded:command",
   EmbeddedGetState: "embedded:get-state",
+  // E5 fixes — fullscreen via BrowserWindow IPC (DOM requestFullscreen unreliable in Electron)
+  EmbeddedSetFullscreen: "embedded:set-fullscreen",     // renderer → main
+  EmbeddedFullscreenChanged: "embedded:fullscreen-changed", // main → renderer (push)
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

@@ -1,4 +1,4 @@
-# Session handoff — E4 embedded player controls complete
+# Session handoff — E6: YouTube/Netflix fullscreen UX
 
 Read `CLAUDE.md` (section 10 especially) before making changes.
 
@@ -12,141 +12,133 @@ Read `CLAUDE.md` (section 10 especially) before making changes.
 - ✅ **E3** — App-level overlay (no navigation); StrictMode-safe `cancelledRef`.
 - ✅ **E4** — Full player controls: play/pause, seek, volume, subtitle/audio
   track selection, keyboard shortcuts, responsive canvas.
+- ✅ **E5** — Watch progress persistence + fullscreen toggle (E5 original).
+- ✅ **E5 fixes** — Fullscreen via BrowserWindow IPC, resume from saved
+  progress, subtitle quality improved (1080p render FBO).
+- ✅ **E6** — YouTube/Netflix UX: video fills full area, floating chrome,
+  auto-hide controls after inactivity, cursor hides.
 
-## 3. E4 changes (this session)
+## 3. E6 changes (this session)
 
-### native/embedded-mpv/src/lib.rs
-- New `EmbeddedCmd` enum (SetPause, SeekAbsolute, SetVolume, SetSid, SetAid)
-- New `PlaybackState` struct in `Shared` — written by render thread every ~200ms
-- New `Session.cmd_tx: Sender<EmbeddedCmd>` — JS thread sends controls here
-- New napi exports: `send_command(type, value)`, `get_playback_state()`
-- New FFI loads: `mpv_set_property_string`, `mpv_get_property_string`, `mpv_free`
-- Render loop drains `cmd_rx` each iteration; updates state on timer; refreshes
-  track-list on `MPV_EVENT_FILE_LOADED`
+### Goal
+Make the embedded player feel like YouTube/Netflix:
+- Video uses the maximum available area at all times (including non-fullscreen).
+- Aspect ratio is preserved via `object-fit:contain`.
+- Header, controls, stats are floating overlays — they never push the canvas down.
+- Chrome auto-hides after 2500 ms of inactivity.
+- Cursor hides with chrome.
+- Controls reappear on mouse move, keyboard, or pause.
 
-### IPC four-layer additions
-| Layer | Change |
-|---|---|
-| `ipc-channels.ts` | `EmbeddedCommand: "embedded:command"`, `EmbeddedGetState: "embedded:get-state"` |
-| `electron/embeddedMpvExperimental.ts` | `embeddedSendCommand()`, `embeddedGetState()` |
-| `electron/main.ts` | Two new `ipcMain.handle` registrations |
-| `electron/preload.ts` | `embeddedMpv.command()`, `embeddedMpv.getState()` |
-| `src/types/embedded-mpv.d.ts` | `EmbeddedPlaybackState`, `MpvTrack` types; two new window methods |
+### CSS changes (`src/styles.css`, embedded overlay section)
 
-### src/features/player/useEmbeddedPlayback.ts (expanded)
-- State polling: `useEffect([running])` → `setInterval(api.getState, 250ms)`
-- Derived: `audioTracks`, `subtitleTracks` (parsed from `trackListJson`)
-- Controls: `togglePause`, `seekTo`, `seekRelative`, `setVolume`,
-  `setSubtitleTrack`, `setAudioTrack`
-- All controls fire-and-forget via `api.command(type, value)`
+**Old layout**: `.emb-overlay` was `display:flex; flex-direction:column`. The header
+was a flex child that took layout space above the canvas. Fullscreen used CSS
+`:fullscreen` pseudo-class (unreliable in Electron).
 
-### src/components/EmbeddedPlayerOverlay.tsx (rewritten)
-- Full player UI with control bar **overlaid at the bottom of the stage**
-- Play/pause button, progress scrubber (seek on mouseup only), volume slider
-- Subtitle and audio track `<select>` menus (populated from mpv track-list)
-- Keyboard shortcuts: Space=play/pause, ←/→=±5s, M=mute, Esc=close
-- Dev stats strip at the very bottom (fps, getFrame ms, drawn/skipped counts)
-- Canvas: `width: 100%; height: 100%; object-fit: contain` — fills stage,
-  preserves 16:9 aspect ratio, letter-boxes cleanly on any window size
+**New layout**:
+- `.emb-overlay` — `position:fixed; inset:0` (unchanged), no flex.
+- `.emb-overlay__stage` — `position:absolute; inset:0`, fills everything.
+- `.emb-overlay__canvas` — `width:100%; height:100%; object-fit:contain`.
+- `.emb-overlay__header` — `position:absolute; top:0; left:0; right:0; z-index:11`
+  with top gradient. Fades with `controls-hidden`.
+- `.emb-overlay__errors` — `position:absolute; top:48px` always visible.
+- `.emb-overlay__stats` — `position:absolute; bottom:64px; left:12px` corner HUD.
+- `.emb-overlay__controls` — `position:absolute; bottom:0; left:0; right:0; z-index:11`
+  with bottom gradient. Fades with `controls-hidden`.
+- `.emb-overlay.controls-hidden .emb-overlay__header/controls/stats` → `opacity:0; pointer-events:none`.
+- `.emb-overlay.controls-hidden` → `cursor:none`.
+- `.emb-overlay.is-fullscreen` — marker class (styling only; no `:fullscreen` selectors).
 
-### src/styles.css
-- Overlay CSS rewritten for E4 — control bar is `position: absolute; bottom: 0`
-  overlaid on the stage with a gradient fade
-- Canvas: `width: 100%; height: 100%; object-fit: contain`
-- New classes: `.emb-overlay__progress`, `.emb-overlay__volume`,
-  `.emb-overlay__track-select`, `.emb-overlay__time`, `.emb-overlay__ctrl--icon`
+### Component changes (`src/components/EmbeddedPlayerOverlay.tsx`)
 
-### CLAUDE.md
-- Section 10 added with full embedded MPV architecture docs
-- Section 1 overview updated
-- Section 5 player rules updated
-
-## 4. Build steps
-
-### App (renderer + Electron main)
+**JSX structure** — header, errors, stats moved inside `emb-overlay__stage`:
 ```
-npm run dev          # development
-npm run build        # production
+<div.emb-overlay [rootClass]>        ← is-fullscreen, controls-hidden toggles
+  <div.emb-overlay__stage>
+    [loading indicator]
+    <canvas />
+    <div.emb-overlay__header />      ← floating top
+    <div.emb-overlay__errors />      ← always-visible banners
+    <div.emb-overlay__stats />       ← corner HUD
+    <div.emb-overlay__controls />    ← floating bottom (when running/starting)
+  </div>
+</div>
 ```
 
-### Native embedded addon (separate, manual)
+**Auto-hide logic**:
+- `controlsVisible` state → drives `controls-hidden` class on root.
+- `hideTimerRef` — 2500 ms timeout; reads refs (not state) to avoid stale closures.
+- `pausedRef`, `runningRef`, `draggingRef`, `isInteractingRef` — synced from state.
+- `showControls()` — sets visible, schedules hide.
+- `scheduleHideControls()` — clears old timer, sets new 2500 ms timer; aborts if
+  `pausedRef || draggingRef || isInteractingRef || !runningRef`.
+- `pinControls()` / `unpinControls()` — set `isInteractingRef`; attached to
+  `onMouseEnter/onMouseLeave` and `onFocus/onBlur` on the controls div and close button.
+- Root div: `onMouseMove={handleMouseActivity}`, `onMouseEnter={handleMouseActivity}`.
+- Keyboard handler: calls `showControls()` on every key.
+- Progress drag: calls `pinControls()` on mousedown, `unpinControls()` on mouseup;
+  also sets `draggingRef.current` directly (synchronous, no React batch delay).
+- `paused → true`: cancel timer, always show.
+- `running → true`: show and schedule hide.
+- `req → null`: cancel timer, reset visible.
+- Unmount: cancel timer.
+
+**`rootClass` computation**:
+```ts
+const rootClass = ["emb-overlay", isFullscreen ? "is-fullscreen" : "", !controlsVisible ? "controls-hidden" : ""]
+  .filter(Boolean).join(" ");
 ```
-cd native/embedded-mpv
-npm install
-npm run build
-```
-Requires in `native/embedded-mpv/vendor/`:
-- `libmpv-2.dll`
-- `libEGL.dll`
-- `libGLESv2.dll`
 
-The app loads the addon lazily — missing addon gives a graceful error, never crashes.
+**Stats HUD** — URL line removed (it's a tiny corner overlay now). Shows:
+`fps · ms · drawn/skipped`.
 
-## 5. TypeScript verification
-Both tsc checks clean on real Windows files:
-- `tsc -p tsconfig.json --noEmit`
-- `tsc -p electron/tsconfig.json --noEmit`
-
-**Sandbox note**: The Linux sandbox mirror truncates freshly-written files,
-causing bogus "} expected" / "'*/' expected" errors. These are NOT real. Always
-trust `npm run build` on Windows, not `tsc` in the sandbox.
-
-## 6. File map (E4)
+## 4. File map (E6)
 
 | File | Change |
 |---|---|
-| `native/embedded-mpv/src/lib.rs` | Control API, state mutex, mpsc channel |
-| `electron/embeddedMpvExperimental.ts` | `embeddedSendCommand`, `embeddedGetState` |
-| `electron/ipc-channels.ts` | Two new channels |
-| `electron/main.ts` | Two new IPC handlers |
-| `electron/preload.ts` | Two new `embeddedMpv` methods |
-| `src/types/embedded-mpv.d.ts` | `EmbeddedPlaybackState`, `MpvTrack`, two new methods |
-| `src/features/player/useEmbeddedPlayback.ts` | State polling + all controls |
-| `src/components/EmbeddedPlayerOverlay.tsx` | Full player UI |
-| `src/styles.css` | Overlay CSS rewritten, canvas responsive fix |
-| `CLAUDE.md` | Section 10 added |
+| `src/styles.css` | Embedded overlay section rewritten: stage fills window, all chrome is `position:absolute`, auto-hide CSS, `controls-hidden` + `is-fullscreen` classes |
+| `src/components/EmbeddedPlayerOverlay.tsx` | JSX restructured (all chrome inside stage); auto-hide state/refs/callbacks; `rootClass` with class toggles; `pinControls`/`unpinControls` on controls div |
+| `CLAUDE.md` | Section 10 updated with E6 YouTube/Netflix UX |
+| `docs/current-session-handoff.md` | This file |
 
-## 7. Known limitations / TODO
+## 5. Build steps
 
-- **Fixed render resolution**: 1280×720 (W/H in `lib.rs`). CSS scales visually.
-- **No watch_progress** writes for embedded playback.
-- **No subtitle auto-loading** from addons or OpenSubtitles. The subtitle menu
-  only shows tracks mpv loaded itself (from the stream or embedded subs).
-  → Document as TODO; do not touch external subtitle collector.
-- **No pause IPC** for the standalone test page (`/experimental-embedded-player`).
-  That page uses `useEmbeddedPlayback` directly but its Start/Stop buttons
-  don't go through the overlay controls.
-- **Copy-based frame transfer** (Rust → main → renderer) — may be choppy at
-  high frame rates. This is a known architectural limitation of the E1 approach.
-- **Seek accuracy**: mpv seek mode is "absolute" (key frames). For precise seek,
-  would need "absolute-percent" or "exact" mode. Currently acceptable.
-- **Volume range**: mpv allows 0–130 (130 = amplified). Slider reflects this.
-- **Control bar always visible** while running. Fade-on-inactivity is a future
-  polish task (not required yet).
+```
+npm run dev    # development
+npm run build  # production
+```
 
-## 8. Acceptance test for E4
-1. `cd native/embedded-mpv && npm run build` if addon not built.
-2. Settings → Experimental → enable **Embedded player**.
-3. Open a movie media page → find a direct HTTP/HTTPS source card.
-4. Click **⬡ Play Embedded** → overlay opens over current page.
-5. Video starts playing automatically. Canvas fills the overlay area.
-6. **Resize the app window** — video scales, preserves 16:9, no distortion. ✓
-7. Click **⏸** — video pauses. Click **▶** — resumes. ✓
-8. Drag/click the progress bar — video seeks on release. ✓
-9. Adjust volume slider — volume changes. ✓
-10. Press M — mutes (vol→0), press M again — restores. ✓
-11. Press Space — play/pause toggle. ✓
-12. Press ← / → — seek ±5 seconds. ✓
-13. Press Esc — overlay closes, playback stops. ✓
-14. If the stream has subtitle tracks, CC menu shows them; select one → subs appear.
-15. If the stream has multiple audio tracks, 🎵 menu shows them; switch works.
-16. Open a series episode source, click ⬡ Play Embedded — same flow works. ✓
-17. **▶ Play with MPV** from any source — external MPV playback completely
-    unaffected, works exactly as before. ✓
-18. `/experimental-embedded-player` sidebar link (when flag on) — manual URL
-    test page still works independently. ✓
+The native Rust addon (`native/embedded-mpv/`) does NOT need a rebuild for E6
+(all changes are TypeScript/CSS only).
 
-## 9. Guardrails (unchanged)
+## 6. Acceptance tests
+
+### Video fills area (non-fullscreen)
+1. Enable embedded player in Settings → Experimental.
+2. Play a source via ⬡ Play Embedded.
+3. Canvas fills the full window from edge to edge. ✓
+4. Letterboxing visible if video AR ≠ window AR (object-fit:contain). ✓
+5. Header and controls are floating overlays — they do NOT push canvas down. ✓
+
+### Auto-hide
+6. After 2.5 s of no mouse/keyboard activity, header, controls, and stats fade. ✓
+7. Cursor disappears with the chrome. ✓
+8. Move mouse → chrome reappears instantly. ✓
+9. Pause → chrome stays visible, no auto-hide. ✓
+10. Unpause → 2.5 s timer restarts. ✓
+11. Hover over controls → timer paused, chrome stays. ✓
+12. Mouse leaves controls → 2.5 s timer restarts. ✓
+13. Drag the scrub bar → chrome stays visible throughout. ✓
+14. Release scrub bar → 2.5 s timer restarts. ✓
+
+### Fullscreen
+15. Click ⤢ → fullscreen, canvas still uses object-fit:contain. ✓
+16. Press Esc → exits fullscreen (overlay stays open). ✓
+17. Press Esc again → overlay closes. ✓
+18. Press F → toggles fullscreen. ✓
+19. F11 / OS fullscreen → `is-fullscreen` class syncs via `onFullscreenChange`. ✓
+
+## 7. Guardrails (unchanged)
 - Do **not** touch `electron/mpv.ts`, `electron/mpvIpc.ts`, external-mpv path.
 - Do **not** touch source picker, subtitles/audio for external MPV, profiles,
   library, Continue Watching, database, debrid/torrent.

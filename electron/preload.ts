@@ -63,6 +63,7 @@ const api = {
       episode?: number | null;
       progressSeconds: number;
       durationSeconds: number;
+      completed?: boolean;
     }) => ipcRenderer.invoke(IPC.ProgressUpsert, args),
     get: (args: { profileId: number; mediaId: string; playableId: string }) =>
       ipcRenderer.invoke(IPC.ProgressGet, args),
@@ -180,7 +181,9 @@ const electronAPI = {
 // EXPERIMENTAL embedded libmpv canvas player bridge (gated; not the default).
 // Separate namespace so it's clearly opt-in and isolated from the normal API.
 const embeddedMpv = {
-  start: (url: string) => ipcRenderer.invoke(IPC.EmbeddedStart, { url }),
+  // E5 fix: startTimeSecs enables resume-from-progress; libmpv seeks on FILE_LOADED.
+  start: (url: string, startTimeSecs?: number) =>
+    ipcRenderer.invoke(IPC.EmbeddedStart, { url, startTimeSecs }),
   stop: () => ipcRenderer.invoke(IPC.EmbeddedStop),
   getFrame: (sinceIndex: number) =>
     ipcRenderer.invoke(IPC.EmbeddedGetFrame, { sinceIndex }),
@@ -188,6 +191,17 @@ const embeddedMpv = {
   command: (type: string, value: number) =>
     ipcRenderer.invoke(IPC.EmbeddedCommand, { type, value }),
   getState: () => ipcRenderer.invoke(IPC.EmbeddedGetState),
+  // E5 fix: BrowserWindow fullscreen (DOM requestFullscreen unreliable in Electron).
+  setFullscreen: (fullscreen: boolean) =>
+    ipcRenderer.invoke(IPC.EmbeddedSetFullscreen, fullscreen),
+  // Subscribe to fullscreen state changes pushed from the main process.
+  // Returns an unsubscribe function.
+  onFullscreenChange: (cb: (isFullscreen: boolean) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, isFullscreen: boolean) =>
+      cb(isFullscreen);
+    ipcRenderer.on(IPC.EmbeddedFullscreenChanged, handler);
+    return () => ipcRenderer.removeListener(IPC.EmbeddedFullscreenChanged, handler);
+  },
 };
 
 contextBridge.exposeInMainWorld("mediaCenter", api);

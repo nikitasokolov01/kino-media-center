@@ -86,6 +86,16 @@ function createWindow(): BrowserWindow {
     return { action: "deny" };
   });
 
+  // E5 fix: push fullscreen state changes to renderer so the embedded overlay
+  // can sync its button icon.  DOM requestFullscreen() is unreliable in
+  // Electron's renderer — BrowserWindow.setFullScreen() is the correct path.
+  win.on("enter-full-screen", () =>
+    win.webContents.send(IPC.EmbeddedFullscreenChanged, true),
+  );
+  win.on("leave-full-screen", () =>
+    win.webContents.send(IPC.EmbeddedFullscreenChanged, false),
+  );
+
   if (isDev) {
     win.loadURL("http://localhost:5173");
     win.webContents.openDevTools({ mode: "detach" });
@@ -330,8 +340,22 @@ function registerIpcHandlers() {
 
   // Experimental embedded libmpv canvas player (gated; never the default).
   // All handlers degrade gracefully when the native addon is missing/fails.
-  ipcMain.handle(IPC.EmbeddedStart, async (_e, args: { url: string }) =>
-    embeddedStart(args?.url),
+  ipcMain.handle(
+    IPC.EmbeddedStart,
+    async (_e, args: { url: string; startTimeSecs?: number }) =>
+      embeddedStart(args?.url, args?.startTimeSecs),
+  );
+  // E5 fix: fullscreen via BrowserWindow IPC (DOM requestFullscreen unreliable
+  // in Electron).  Uses getAllWindows()[0] because registerIpcHandlers() runs
+  // before createWindow() returns.
+  ipcMain.handle(
+    IPC.EmbeddedSetFullscreen,
+    async (_e, fullscreen: boolean) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (!win) return false;
+      win.setFullScreen(fullscreen);
+      return fullscreen;
+    },
   );
   ipcMain.handle(IPC.EmbeddedStop, async () => embeddedStop());
   ipcMain.handle(

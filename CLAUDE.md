@@ -102,7 +102,10 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
   behind `experimentalEmbeddedPlayer` flag): libmpv renders frames offscreen via
   ANGLE EGL, copies RGBA pixels to a `<canvas>` in a full-screen overlay. Supports
   real app sources (movies + episodes) via "⬡ Play Embedded" on StreamCards.
-  E4 controls: play/pause, seek, volume, subtitle/audio track selection.
+  Controls: play/pause, seek, volume, subtitle/audio track selection, fullscreen
+  toggle (F key / ⤢ button). Watch progress saved every 5 s and on close, with
+  completed detection (≥90% or ≤15 min remaining) — Continue Watching and
+  watched state work identically to external MPV.
   External MPV remains the default/fallback and is completely unaffected.
 
 ## 4. Important Architecture Rules
@@ -192,7 +195,6 @@ addons return and plays direct HTTP/HTTPS URLs through MPV.
 ## 9. Future Roadmap
 
 - Subtitle auto-loading for embedded player (addons + OpenSubtitles; external MPV already has this)
-- watch_progress writes for embedded playback (currently no progress saved)
 - Dynamic embedded render resolution (currently fixed 1280×720 in `lib.rs`)
 - Fade-on-inactivity for the embedded control bar
 - Source filtering/sorting (only if needed later)
@@ -238,13 +240,66 @@ Do **not** merge to main or remove external MPV unless explicitly decided.
   Mutex updated by the render thread every ~200 ms. Fields: `paused`, `timePos`,
   `duration`, `volume`, `trackListJson` (JSON from mpv's `track-list` property).
 
+### E5 Progress tracking + fullscreen
+- **Progress**: `useEmbeddedPlayback` accepts an optional `EmbeddedProgressContext`
+  (profileId + media metadata) via `startPlayback(url, ctx)`. While running, a
+  5-second `setInterval` calls `flushProgress()` which reads from refs (no React
+  deps) and calls `window.mediaCenter.progress.upsert(...)` (existing IPC
+  channel). On stop, `flushProgress()` is called synchronously before teardown.
+  `completed` is set when `timePos ≥ duration * 0.9` OR `duration - timePos ≤ 900`.
+  The overlay (`EmbeddedPlayerOverlay.tsx`) gets `profileId` from `useProfile()`
+  and builds the context on each req change.
+
+### E5 Bug fixes (same branch — fixes for fullscreen, resume, subtitle quality)
+
+- **Fullscreen (fixed)**: DOM `requestFullscreen()` silently fails in Electron.
+  Replaced with BrowserWindow IPC: renderer calls `window.embeddedMpv.setFullscreen(bool)`
+  → main calls `win.setFullScreen(bool)` → main pushes `embedded:fullscreen-changed`
+  back to renderer → renderer syncs `isFullscreen` state via `onFullscreenChange`
+  subscription. IPC channels: `EmbeddedSetFullscreen` + `EmbeddedFullscreenChanged`
+  in `ipc-channels.ts`. Esc exits fullscreen first, then closes. F key toggles.
+  Button hidden if `window.embeddedMpv.setFullscreen` is unavailable.
+  CSS rules (`:fullscreen` / `:-webkit-full-screen`) hide header+stats in fullscreen —
+  these still apply because BrowserWindow fullscreen propagates to the document.
+
+- **Resume from saved progress (fixed)**: `EmbeddedProgressContext` has a new
+  `startSeconds?: number` field. Before calling `startPlayback`, the overlay
+  queries `window.mediaCenter.progress.get(...)` and sets `startSeconds` to
+  `progressSeconds` if the record exists, is not completed, and is > 10 s.
+  `useEmbeddedPlayback.startPlayback` passes `context?.startSeconds` to
+  `api.start(url, startTimeSecs)`. The Rust `start()` function now accepts
+  `start_time_secs: Option<f64>`; the render thread stores it in `pending_resume`
+  and issues an absolute seek on `MPV_EVENT_FILE_LOADED`.
+
+- **Subtitle quality (fixed)**: Render resolution raised from 1280×720 to
+  1920×1080 (constants `W` and `H` in `native/embedded-mpv/src/lib.rs`). libmpv
+  composites subtitles into the FBO at render resolution — 720p FBO caused
+  blurry subtitles at full window size. Per-frame copy increases from ~3.5 MB to
+  ~8 MB; still viable for the experimental path.
+
+### E6 YouTube/Netflix UX (same branch)
+
+- **Stage fills entire window**: `.emb-overlay__stage` is `position:absolute; inset:0`.
+  Canvas uses `object-fit:contain` — aspect ratio preserved at all sizes.
+- **Floating chrome**: header, controls bar, error banners, and stats are all
+  `position:absolute` overlays inside the stage. They never take layout space or
+  shrink the canvas.
+- **Auto-hide**: `controlsVisible` state drives a `controls-hidden` class on the root.
+  After 2500 ms of inactivity the class is applied → CSS fades header/controls/stats
+  to `opacity:0; pointer-events:none` and sets `cursor:none`. Controls reappear on
+  any mouse move/enter or key press. Never hides while paused, scrubbing (draggingRef),
+  or while the pointer is over controls (isInteractingRef). Refs avoid stale closures.
+- **`is-fullscreen` class**: React class on root mirrors BrowserWindow fullscreen state
+  (set via `onFullscreenChange` subscription). Used for styling; replaces old CSS
+  `:fullscreen` / `:-webkit-full-screen` selectors that didn't work in Electron.
+- **Esc behavior**: first Esc exits fullscreen; second Esc closes overlay.
+
 ### Known limitations / TODO
-- Native render resolution is fixed 1280×720 (W/H constants in `lib.rs`).
-- No watch_progress writes for embedded playback.
 - No subtitle auto-loading from addons/OpenSubtitles (only mpv's loaded tracks).
 - No pause/seek keyboard IPC for the standalone test page (only overlay has it).
 - Canvas uses copy-based frame transfer (native → main → renderer) — may be
   choppy at high frame rates.
+- Render resolution is now fixed 1920×1080. Dynamic resolution is still a future item.
 
 ### Guardrails
 - Do **not** touch `electron/mpv.ts`, `electron/mpvIpc.ts`, external-mpv dispatch.

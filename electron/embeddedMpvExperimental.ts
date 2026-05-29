@@ -14,7 +14,9 @@ import fs from "node:fs";
 
 // Shape of the napi addon (native/embedded-mpv/src/lib.rs).
 interface EmbeddedAddon {
-  start: (url: string, libmpvPath: string) => void;
+  // E5 fix: start_time_secs is optional; when provided libmpv seeks to that
+  // position immediately after MPV_EVENT_FILE_LOADED fires.
+  start: (url: string, libmpvPath: string, startTimeSecs?: number | null) => void;
   stop: () => void;
   getLatestFrame: (sinceIndex: number) => {
     noNewFrame: boolean;
@@ -126,7 +128,9 @@ function isHttp(url: unknown): url is string {
   );
 }
 
-export function embeddedStart(url: string): EmbeddedStartResult {
+// E5 fix: accepts optional startTimeSecs for resume-from-progress.
+// When provided (and > 10), libmpv seeks to that position on MPV_EVENT_FILE_LOADED.
+export function embeddedStart(url: string, startTimeSecs?: number): EmbeddedStartResult {
   if (!isHttp(url)) {
     return { ok: false, error: "URL must be http(s)." };
   }
@@ -140,7 +144,8 @@ export function embeddedStart(url: string): EmbeddedStartResult {
     };
   }
   try {
-    a.start(url, LIBMPV_DLL);
+    // Pass null explicitly when no start time — napi-rs Option<f64> expects null/undefined.
+    a.start(url, LIBMPV_DLL, startTimeSecs != null && startTimeSecs > 10 ? startTimeSecs : null);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

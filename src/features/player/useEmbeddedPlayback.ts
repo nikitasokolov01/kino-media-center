@@ -1,12 +1,20 @@
-// Custom hook owning the full libmpv canvas player lifecycle (E3 → E4).
+// Custom hook owning the full libmpv canvas player lifecycle (E3 → E4 → E5).
 //
 // Owns: IPC start/stop, RAF draw loop, frame counters, stats state,
-//       playback state polling (E4), and control dispatch helpers (E4).
+//       playback state polling (E4), control dispatch helpers (E4),
+//       and watch-progress persistence (E5).
 //
 // StrictMode safety via cancelledRef:
 //   - cancelledRef.current is set false at the top of startPlayback
 //   - stopPlayback sets it to true synchronously
 //   - startPlayback checks it after every await; stale first-pass bails out
+//
+// Progress tracking (E5):
+//   - startPlayback accepts an optional EmbeddedProgressContext carrying the
+//     profileId and media metadata needed to persist progress.
+//   - Progress is flushed via window.mediaCenter.progress.upsert() every 5 s
+//     while running, and once more immediately on stop.
+//   - completed = timePos ≥ 90% of duration  OR  remaining ≤ 15 min.
 //
 // Consumers:
 //   - EmbeddedPlayerOverlay (app-level overlay, receives req from store)
@@ -15,11 +23,38 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EmbeddedPlaybackState, MpvTrack } from "../../types/embedded-mpv.js";
 
+// ---- Progress constants (match mpvIpc.ts) ------------------------------------
+
+const PROGRESS_POLL_MS = 5_000;
+const COMPLETED_THRESHOLD = 0.9;        // 90%
+const COMPLETED_REMAINING_SECS = 900;   // 15 minutes
+
+// ---- Interfaces --------------------------------------------------------------
+
 export interface EmbeddedPlaybackStats {
   fps: number;
   avgGetMs: number;
   drawn: number;
   skipped: number;
+}
+
+/**
+ * Media context required to persist watch progress. Passed into startPlayback
+ * by the overlay; optional so the standalone test page can omit it.
+ */
+export interface EmbeddedProgressContext {
+  profileId: number;
+  type: "movie" | "series";
+  mediaId: string;
+  playableId: string;
+  mediaTitle: string;
+  episodeTitle?: string | null;
+  season?: number | null;
+  episode?: number | null;
+  poster?: string | null;
+  streamTitle?: string | null;
+  /** E5 fix: resume position in seconds. Libmpv seeks here on MPV_EVENT_FILE_LOADED. */
+  startSeconds?: number;
 }
 
 export interface UseEmbeddedPlaybackReturn {
@@ -32,7 +67,7 @@ export interface UseEmbeddedPlaybackReturn {
   stats: EmbeddedPlaybackStats;
   available: boolean;
   // Lifecycle
-  startPlayback: (url: string) => Promise<void>;
+  startPlayback: (url: string, context?: EmbeddedProgressContext) => Promise<void>;
   stopPlayback: () => void;
   // E4: Playback state (polled every 250ms while running)
   playbackState: EmbeddedPlaybackState | null;
@@ -85,6 +120,10 @@ export function useEmbeddedPlayback(): UseEmbeddedPlaybackReturn {
   const cancelledRef = useRef(false);
   const lastIndexRef = useRef(0);
 
+  // E5: progress tracking refs (no re-render on change)
+  const progressContextRef = useRef<EmbeddedProgressContext | null>(null);
+  const lastKnownProgressRef = useRef<{ timePos: number; duration: number } | null>(null);
+
   const counters = useRef({
     drawn: 0,
     skipped: 0,
@@ -96,6 +135,65 @@ export function useEmbeddedPlayback(): UseEmbeddedPlaybackReturn {
 
   const available =
     typeof window !== "undefined" && !!window.embeddedMpv;
+
+  // ---- E5: Progress persistence --------------------------------------------
+  //
+  // flushProgress reads from refs — no React deps — safe to call from any
+  // async or synchronous context, including stopPlayback.
+
+  const flushProgress = useCallback(() => {
+    const ctx = progressContextRef.current;
+    const pos = lastKnownProgressRef.current;
+    if (!ctx || !pos || pos.duration <= 0 || pos.timePos < 0) return;
+
+    const completed =
+      pos.timePos >= pos.duration * COMPLETED_THRESHOLD ||
+      pos.duration - pos.timePos <= COMPLETED_REMAINING_SECS;
+
+    void window.mediaCenter?.progress
+      .upsert({
+        profileId: ctx.profileId,
+        type: ctx.type,
+        mediaId: ctx.mediaId,
+        playableId: ctx.playableId,
+        title: ctx.mediaTitle,
+        episodeTitle: ctx.episodeTitle ?? null,
+        poster: ctx.poster ?? null,
+        streamTitle: ctx.streamTitle ?? null,
+        season: ctx.season ?? null,
+        episode: ctx.episode ?? null,
+        progressSeconds: pos.timePos,
+        durationSeconds: pos.duration,
+        completed,
+      })
+      .catch(() => {
+        // DB write failures are non-fatal — playback isn't affected.
+      });
+  }, []); // pure ref reads — no deps needed
+
+  // E5: Mirror playbackState into lastKnownProgressRef so flushProgress can
+  //     always see the latest position even before state settles.
+  useEffect(() => {
+    if (
+      playbackState &&
+      typeof playbackState.timePos === "number" &&
+      playbackState.timePos >= 0 &&
+      typeof playbackState.duration === "number" &&
+      playbackState.duration > 0
+    ) {
+      lastKnownProgressRef.current = {
+        timePos: playbackState.timePos,
+        duration: playbackState.duration,
+      };
+    }
+  }, [playbackState]);
+
+  // E5: 5-second progress save timer while running.
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(flushProgress, PROGRESS_POLL_MS);
+    return () => clearInterval(id);
+  }, [running, flushProgress]);
 
   // ---- Frame drawing -------------------------------------------------------
 
@@ -190,19 +288,27 @@ export function useEmbeddedPlayback(): UseEmbeddedPlaybackReturn {
   }, []);
 
   const stopPlayback = useCallback(() => {
+    // E5: flush progress before tearing down (synchronous — reads refs).
+    flushProgress();
+
     cancelledRef.current = true;
     stopLoop();
     setStarting(false);
     setPlaybackState(null);
+
+    // Clear progress refs so a stale flush can't fire after the session ends.
+    progressContextRef.current = null;
+    lastKnownProgressRef.current = null;
+
     const api = window.embeddedMpv;
     if (api) void api.stop().catch(() => {});
     if (import.meta.env.DEV) {
       console.log("[embedded:stop] native session stopped");
     }
-  }, [stopLoop]);
+  }, [stopLoop, flushProgress]);
 
   const startPlayback = useCallback(
-    async (url: string) => {
+    async (url: string, context?: EmbeddedProgressContext) => {
       if (!url) return;
       const api = window.embeddedMpv;
       if (!api) {
@@ -211,6 +317,10 @@ export function useEmbeddedPlayback(): UseEmbeddedPlaybackReturn {
       }
 
       cancelledRef.current = false;
+
+      // E5: store progress context for this session; reset last known position.
+      progressContextRef.current = context ?? null;
+      lastKnownProgressRef.current = null;
 
       stopLoop();
       lastIndexRef.current = 0;
@@ -228,9 +338,13 @@ export function useEmbeddedPlayback(): UseEmbeddedPlaybackReturn {
         console.log("[embedded:start] calling api.start()", url.slice(0, 80));
       }
 
+      // E5 fix: pass startSeconds so libmpv can seek on MPV_EVENT_FILE_LOADED.
+      if (import.meta.env.DEV && context?.startSeconds) {
+        console.log("[embedded:resume] seeking to", context.startSeconds, "s on file load");
+      }
       let res: { ok: boolean; error?: string };
       try {
-        res = await api.start(url);
+        res = await api.start(url, context?.startSeconds);
       } catch (e) {
         if (cancelledRef.current) return;
         setStarting(false);

@@ -96,6 +96,7 @@ export interface MediaCenterApi {
       episode?: number | null;
       progressSeconds: number;
       durationSeconds: number;
+      completed?: boolean;
     }) => Promise<WatchProgress>;
     get: (args: {
       profileId: number;

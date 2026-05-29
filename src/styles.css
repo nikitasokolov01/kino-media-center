@@ -2371,28 +2371,75 @@ a:hover { text-decoration: underline; }
   font-weight: 600;
 }
 
-/* ─── Embedded player overlay (E4) ─────────────────────────────────────── */
+/* ─── Embedded player overlay (E4/E5/E6) ─────────────────────────────────
+ *
+ * Layout (E6 — YouTube/Netflix style):
+ *   • .emb-overlay     — position:fixed inset:0, always covers the full window
+ *   • .emb-overlay__stage — position:absolute inset:0, fills everything
+ *   • canvas           — 100%×100% object-fit:contain, aspect-ratio preserved
+ *   • header/controls/stats — all position:absolute; float OVER the canvas;
+ *     they never shrink the canvas area (no layout space taken)
+ *   • .controls-hidden — fades chrome and hides cursor (auto-hide after 2.5s)
+ *   • .is-fullscreen   — React class mirroring BrowserWindow fullscreen state
+ *
+ * ─────────────────────────────────────────────────────────────────────── */
+
 .emb-overlay {
   position: fixed;
   inset: 0;
   z-index: 900;
   background: #000;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
   color: #fff;
 }
 
-/* ── Header bar ── */
+/* ── Stage fills the entire overlay ── */
+.emb-overlay__stage {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  overflow: hidden;
+}
+
+/* ── Canvas fills stage; object-fit:contain preserves aspect ratio ── */
+.emb-overlay__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* ── Loading indicator centred in stage ── */
+.emb-overlay__loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ── Header — floats at top, gradient from top, fades with controls ── */
 .emb-overlay__header {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 11;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.7);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  flex-shrink: 0;
-  min-height: 0;
+  /* extra bottom padding so the gradient extends down over the canvas */
+  padding: 8px 12px 36px;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0)   100%
+  );
+  transition: opacity 300ms ease;
+  pointer-events: auto;
 }
 .emb-overlay__title-area {
   display: flex;
@@ -2431,65 +2478,72 @@ a:hover { text-decoration: underline; }
   color: #fff;
 }
 
-/* ── Error banners ── */
-.emb-overlay__banner {
-  margin: 6px 12px 0;
-  flex-shrink: 0;
-}
-
-/* ── Canvas stage — fills remaining vertical space ── */
-.emb-overlay__stage {
-  flex: 1;
-  position: relative;
-  min-height: 0;
-  background: #000;
-  overflow: hidden;
-}
-
-/* Loading indicator centred in stage */
-.emb-overlay__loading {
+/* ── Error banners — always visible regardless of auto-hide state ── */
+.emb-overlay__errors {
   position: absolute;
-  inset: 0;
+  top: 48px; left: 0; right: 0;
+  z-index: 15;          /* above header gradient */
+  padding: 0 12px;
+  pointer-events: none; /* don't block canvas clicks */
+}
+.emb-overlay__banner {
+  margin: 0 0 6px;
+  pointer-events: auto;
+}
+
+/* ── Stats HUD — tiny corner overlay, fades with controls ── */
+.emb-overlay__stats {
+  position: absolute;
+  bottom: 64px;   /* sits above the controls gradient */
+  left: 12px;
+  z-index: 10;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 13px;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
   pointer-events: none;
+  transition: opacity 300ms ease;
 }
 
-/*
- * Canvas sizing (Part 1 — responsive, aspect-ratio-preserving):
- * The canvas pixel buffer is set to 1280×720 by the Rust addon (W/H constants).
- * We set the CSS display size to fill the stage while preserving aspect ratio.
- * width/height 100% makes it fill the stage box; object-fit: contain then
- * letter-boxes the image without stretching it.
- * The canvas is a CSS replaced element, so object-fit works correctly.
- */
-.emb-overlay__canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  background: #000;
-}
-
-/* ── Control bar — overlaid at bottom of stage ── */
+/* ── Controls bar — floats at bottom, gradient from bottom, fades ── */
 .emb-overlay__controls {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  bottom: 0; left: 0; right: 0;
+  z-index: 11;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px;
-  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
-  /* Gradient taller than the bar so the video is still visible above it */
-  padding-top: 28px;
+  /* extra top padding so the gradient extends up over the canvas */
+  padding: 32px 12px 10px;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0)   100%
+  );
+  transition: opacity 300ms ease;
 }
 
-/* Play/Pause + mute icon buttons */
+/* ── Auto-hide: fade chrome after inactivity ── */
+.emb-overlay.controls-hidden .emb-overlay__header,
+.emb-overlay.controls-hidden .emb-overlay__controls,
+.emb-overlay.controls-hidden .emb-overlay__stats {
+  opacity: 0;
+  pointer-events: none;
+}
+/* Hide the mouse cursor when controls are hidden */
+.emb-overlay.controls-hidden {
+  cursor: none;
+}
+
+/* ── .is-fullscreen (React class based on BrowserWindow state) ── */
+/* The overlay already covers the full window (fixed inset:0).
+   This class is a styling marker; the background ensures no flash. */
+.emb-overlay.is-fullscreen {
+  background: #000;
+}
+
+/* ── Play/Pause + icon buttons ── */
 .emb-overlay__ctrl {
   background: none;
   border: none;
@@ -2528,7 +2582,7 @@ a:hover { text-decoration: underline; }
   border-color: #ff8080;
 }
 
-/* Time labels */
+/* ── Time labels ── */
 .emb-overlay__time {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.8);
@@ -2541,28 +2595,28 @@ a:hover { text-decoration: underline; }
   color: rgba(255, 255, 255, 0.45);
 }
 
-/* Seek / scrub bar */
+/* ── Seek / scrub bar ── */
 .emb-overlay__progress {
   flex: 1;
   min-width: 60px;
   height: 4px;
-  accent-color: var(--accent, #e05);
+  accent-color: var(--accent, #6aa3ff);
   cursor: pointer;
 }
 .emb-overlay__progress:hover {
   height: 6px;
 }
 
-/* Volume slider */
+/* ── Volume slider ── */
 .emb-overlay__volume {
   width: 72px;
   height: 4px;
-  accent-color: var(--accent, #e05);
+  accent-color: var(--accent, #6aa3ff);
   cursor: pointer;
   flex-shrink: 0;
 }
 
-/* Track selects (subtitle / audio) */
+/* ── Track selects (subtitle / audio) ── */
 .emb-overlay__track-select {
   background: rgba(0, 0, 0, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -2576,19 +2630,6 @@ a:hover { text-decoration: underline; }
 }
 .emb-overlay__track-select:hover {
   border-color: rgba(255, 255, 255, 0.4);
-}
-
-/* ── Dev stats strip (below stage, always visible for now) ── */
-.emb-overlay__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 4px 12px;
-  background: rgba(0, 0, 0, 0.8);
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.35);
-  flex-shrink: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 /* Experimental embedded player page */

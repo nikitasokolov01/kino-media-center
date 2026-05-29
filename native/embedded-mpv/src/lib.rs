@@ -33,10 +33,13 @@ use napi_derive::napi;
 
 type Egl = egl::DynamicInstance<egl::EGL1_4>;
 
-// Fixed render target for v1 (mpv scales the source to fit). 720p keeps the
-// per-frame copy affordable; this is the documented experimental guardrail.
-const W: i32 = 1280;
-const H: i32 = 720;
+// Render target resolution.  1920×1080 (E5 fix) improves subtitle quality:
+// libmpv composites subtitles into the FBO, so a 720p FBO produced blurry
+// subtitles when the canvas was displayed at full window size.  All downstream
+// code (local buffer, EGL pbuffer, glTexImage2D, glViewport, glReadPixels)
+// derives from W/H — changing these constants is the only change needed.
+const W: i32 = 1920;
+const H: i32 = 1080;
 
 // ---- libmpv C ABI constants ------------------------------------------------
 const MPV_RENDER_PARAM_INVALID: c_int = 0;
@@ -218,8 +221,12 @@ fn is_http(url: &str) -> bool {
 }
 
 /// Start (or restart) the embedded render session for `url`.
+///
+/// `start_time_secs`: optional resume position. When provided (and > 10 s),
+/// the render thread issues an absolute seek immediately after
+/// `MPV_EVENT_FILE_LOADED` so playback resumes from the saved position.
 #[napi]
-pub fn start(url: String, libmpv_path: String) -> Result<()> {
+pub fn start(url: String, libmpv_path: String, start_time_secs: Option<f64>) -> Result<()> {
     if !is_http(&url) {
         return Err(Error::from_reason(
             "Embedded player: URL must be http(s).".to_string(),
@@ -249,7 +256,7 @@ pub fn start(url: String, libmpv_path: String) -> Result<()> {
         .name("embedded-mpv-render".to_string())
         .spawn(move || {
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                render_main(&url, &libmpv_path, &shared_thread, &stop_thread, cmd_rx)
+                render_main(&url, &libmpv_path, start_time_secs, &shared_thread, &stop_thread, cmd_rx)
             }));
             match result {
                 Ok(Ok(())) => {}
@@ -424,16 +431,18 @@ unsafe extern "C" fn mpv_get_proc_address(ctx: *mut c_void, name: *const c_char)
 fn render_main(
     url: &str,
     libmpv_path: &str,
+    start_time_secs: Option<f64>,
     shared: &Arc<Shared>,
     stop: &Arc<AtomicBool>,
     cmd_rx: std::sync::mpsc::Receiver<EmbeddedCmd>,
 ) -> std::result::Result<(), String> {
-    unsafe { render_main_inner(url, libmpv_path, shared, stop, cmd_rx) }
+    unsafe { render_main_inner(url, libmpv_path, start_time_secs, shared, stop, cmd_rx) }
 }
 
 unsafe fn render_main_inner(
     url: &str,
     libmpv_path: &str,
+    start_time_secs: Option<f64>,
     shared: &Arc<Shared>,
     stop: &Arc<AtomicBool>,
     cmd_rx: std::sync::mpsc::Receiver<EmbeddedCmd>,
@@ -598,6 +607,13 @@ unsafe fn render_main_inner(
     let state_interval = Duration::from_millis(200);
     let mut needs_track_refresh = true; // fetch tracks as soon as possible
 
+    // E5 fix: resume position. Consumed on MPV_EVENT_FILE_LOADED (file is
+    // buffered and seekable at that point). Ignored if ≤ 10 s.
+    let mut pending_resume: Option<f64> = match start_time_secs {
+        Some(t) if t > 10.0 => Some(t),
+        _ => None,
+    };
+
     while !stop.load(Ordering::Acquire) {
         // ---- Drain control commands from JS thread ------------------------
         loop {
@@ -663,6 +679,20 @@ unsafe fn render_main_inner(
                 }
                 MPV_EVENT_FILE_LOADED => {
                     needs_track_refresh = true;
+                    // E5 fix: if a resume position was requested, seek now.
+                    // The file is buffered and seeking is valid at FILE_LOADED.
+                    if let Some(t) = pending_resume.take() {
+                        let c_seek = CString::new("seek").unwrap();
+                        let c_t = CString::new(format!("{t:.3}")).unwrap();
+                        let c_abs = CString::new("absolute").unwrap();
+                        let argv_seek: [*const c_char; 4] = [
+                            c_seek.as_ptr(),
+                            c_t.as_ptr(),
+                            c_abs.as_ptr(),
+                            std::ptr::null(),
+                        ];
+                        mpv_command(mpv, argv_seek.as_ptr());
+                    }
                 }
                 _ => {}
             }

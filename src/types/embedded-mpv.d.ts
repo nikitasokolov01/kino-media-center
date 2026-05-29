@@ -51,7 +51,8 @@ export interface MpvTrack {
 declare global {
   interface Window {
     embeddedMpv?: {
-      start: (url: string) => Promise<EmbeddedStartResult>;
+      /** E5 fix: startTimeSecs enables resume-from-progress. Libmpv seeks on FILE_LOADED. */
+      start: (url: string, startTimeSecs?: number) => Promise<EmbeddedStartResult>;
       stop: () => Promise<EmbeddedStartResult>;
       getFrame: (sinceIndex: number) => Promise<EmbeddedFrame>;
       /**
@@ -63,6 +64,16 @@ declare global {
       command: (type: string, value: number) => Promise<EmbeddedStartResult>;
       /** E4: Read latest playback state from the render thread's shared mutex. */
       getState: () => Promise<EmbeddedPlaybackState>;
+      /**
+       * E5 fix: Toggle BrowserWindow fullscreen. DOM requestFullscreen() is
+       * unreliable in Electron — use win.setFullScreen() via IPC instead.
+       */
+      setFullscreen: (fullscreen: boolean) => Promise<boolean>;
+      /**
+       * E5 fix: Subscribe to fullscreen state changes pushed from main process.
+       * Returns an unsubscribe function.
+       */
+      onFullscreenChange: (cb: (isFullscreen: boolean) => void) => () => void;
     };
   }
 }
