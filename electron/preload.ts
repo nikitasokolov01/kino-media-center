@@ -119,6 +119,8 @@ const api = {
     }) => ipcRenderer.invoke(IPC.SeriesCacheEpisodes, args),
     libraryStatus: (args: { profileId: number; mediaId: string }) =>
       ipcRenderer.invoke(IPC.SeriesLibraryStatus, args),
+    getNextEpisode: (args: { seriesId: string; currentVideoId: string }) =>
+      ipcRenderer.invoke(IPC.SeriesGetNextEpisode, args),
   },
   system: {
     openExternal: (url: string) =>

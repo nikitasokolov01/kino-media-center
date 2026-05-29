@@ -28,6 +28,7 @@ export const IPC = {
   LibraryList: "library:list",
   SeriesCacheEpisodes: "series:cache-episodes",
   SeriesLibraryStatus: "series:library-status",
+  SeriesGetNextEpisode: "series:get-next-episode",
   SystemOpenExternal: "system:open-external",
   SettingsGet: "settings:get",
   SettingsUpdate: "settings:update",

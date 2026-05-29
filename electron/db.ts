@@ -672,6 +672,24 @@ export function getSeriesEpisodes(seriesId: string): SeriesEpisode[] {
 }
 
 /**
+ * The next NORMAL episode (season !== 0) after `currentVideoId` in canonical
+ * position order. Used by the embedded player Next Episode pipeline to
+ * determine what to preload — independent of watch state.
+ * Returns null when `currentVideoId` is not found, is the last normal episode,
+ * or the series has no cached episode data yet.
+ */
+export function getNextEpisodeAfter(
+  seriesId: string,
+  currentVideoId: string,
+): SeriesEpisode | null {
+  const eps = getSeriesEpisodes(seriesId).filter((e) => e.season !== 0);
+  if (eps.length === 0) return null;
+  const idx = eps.findIndex((e) => e.videoId === currentVideoId);
+  if (idx === -1 || idx >= eps.length - 1) return null;
+  return eps[idx + 1];
+}
+
+/**
  * The next episode a profile should watch for a series: the first NORMAL
  * episode (season >= 1, in canonical order) that isn't completed. Returns null
  * when the series has no cached normal episodes or every normal episode is

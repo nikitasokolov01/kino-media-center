@@ -23,6 +23,7 @@ import {
   listWatchedForMedia,
   cacheSeriesEpisodes,
   getSeriesLibraryStatus,
+  getNextEpisodeAfter,
   addLibraryItem,
   removeLibraryItem,
   getLibraryItem,
@@ -298,6 +299,14 @@ function registerIpcHandlers() {
     IPC.SeriesLibraryStatus,
     async (_e, args: { profileId: number; mediaId: string }) =>
       getSeriesLibraryStatus(args.profileId, args.mediaId),
+  );
+
+  // Returns the next normal (season !== 0) episode after currentVideoId in
+  // canonical position order. Used by the embedded player Next Episode pipeline.
+  ipcMain.handle(
+    IPC.SeriesGetNextEpisode,
+    async (_e, args: { seriesId: string; currentVideoId: string }) =>
+      getNextEpisodeAfter(args.seriesId, args.currentVideoId),
   );
 
   // Open a URL in the user's default browser. Only http/https — refuse

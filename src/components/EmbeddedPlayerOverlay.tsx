@@ -1,17 +1,19 @@
-// App-level embedded player overlay (E4 + E5 + E6).
+// App-level embedded player overlay (E4 + E5 + E6 + E7 + E8).
 //
-// E6 additions (YouTube/Netflix UX):
-//   - Stage fills entire window (position:absolute inset:0). Canvas uses
-//     object-fit:contain so aspect ratio is always preserved.
-//   - Header, controls, and stats are position:absolute overlays — they never
-//     reduce the canvas area.
-//   - Auto-hide: chrome fades after 2500 ms of inactivity. Controls reappear on
-//     mouse movement, keyboard events, or when playback is paused.
-//   - `controls-hidden` class on root triggers CSS fade + cursor:none.
-//   - `is-fullscreen` class on root mirrors BrowserWindow fullscreen state.
-//   - Esc: exits fullscreen first (if active), then closes overlay on second press.
+// E8 additions (Next Episode pipeline):
+//   - When playing a series episode the overlay queries series.getNextEpisode()
+//     to find the next normal (non-special) episode.
+//   - Sources for that episode are prefetched in the background via
+//     sourcePrefetch.ts while the current episode is still playing.
+//   - The best next-episode source is chosen via sourceAffinity.ts (same-pack
+//     preference, falling back to quality ranking).
+//   - When remaining time ≤ 180 s a "Next Episode" button appears.
+//   - Clicking it flushes current progress (marks completed since remaining
+//     ≤ 900 s satisfies the completed threshold), stops playback, and immediately
+//     starts the next episode using the preselected source.
+//   - The next-next episode is prefetched automatically after the transition.
 //
-// Safety: does not touch external MPV, profiles, library, DB, or debrid.
+// Safety: does not touch external MPV, profiles, library, DB schema, or debrid.
 
 import {
   useCallback,
@@ -22,17 +24,29 @@ import {
 import {
   clearEmbeddedPlayRequest,
   getEmbeddedPlayRequest,
+  setEmbeddedPlayRequest,
   subscribeEmbeddedPlayRequest,
 } from "../features/player/embeddedRequest.js";
 import { useEmbeddedPlayback } from "../features/player/useEmbeddedPlayback.js";
 import type { EmbeddedProgressContext } from "../features/player/useEmbeddedPlayback.js";
 import { useProfile } from "../state/ProfileContext.js";
+import { useSettings } from "../state/SettingsContext.js";
+import {
+  makePrefetchKey,
+  getCachedSources,
+  prefetchEpisodeSources,
+} from "../core/player/sourcePrefetch.js";
+import { chooseNextEpisodeSource } from "../core/player/sourceAffinity.js";
 import type { PlayRequest } from "../core/player/types.js";
 import type { MpvTrack } from "../types/embedded-mpv.js";
+import type { SeriesNextEpisode } from "../types/preload.js";
+import type { StreamSourceResult, StremioStream } from "../core/stremio/types.js";
 
 // ---- Constants ---------------------------------------------------------------
 
 const HIDE_DELAY_MS = 2500;
+/** Show "Next Episode" button when this many seconds remain. */
+const NEXT_EP_PROMPT_SECS = 180;
 
 // ---- Utilities ---------------------------------------------------------------
 
@@ -55,6 +69,13 @@ function trackLabel(t: MpvTrack, fallbackIndex: number): string {
   return parts.join(" — ");
 }
 
+function nextEpLabel(ep: SeriesNextEpisode): string {
+  const s = ep.season != null ? `S${String(ep.season).padStart(2, "0")}` : "";
+  const e = ep.episode != null ? `E${String(ep.episode).padStart(2, "0")}` : "";
+  const se = [s, e].filter(Boolean).join("");
+  return se || "Next Episode";
+}
+
 // ---- Component ---------------------------------------------------------------
 
 export default function EmbeddedPlayerOverlay() {
@@ -62,8 +83,8 @@ export default function EmbeddedPlayerOverlay() {
     () => getEmbeddedPlayRequest(),
   );
 
-  // E5: active profile for progress tracking
   const { profile } = useProfile();
+  const { settings } = useSettings();
 
   const {
     canvasRef,
@@ -85,25 +106,39 @@ export default function EmbeddedPlayerOverlay() {
     setAudioTrack,
   } = useEmbeddedPlayback();
 
-  // E5 fix: fullscreen via BrowserWindow IPC
+  // ---- Fullscreen (E5 fix) -------------------------------------------------
+
   const [isFullscreen, setIsFullscreen] = useState(false);
   const fullscreenAvailable =
     typeof window !== "undefined" && !!window.embeddedMpv?.setFullscreen;
 
-  // E6: auto-hide controls state
+  // ---- Auto-hide controls (E6) --------------------------------------------
+
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Refs so timer callbacks don't capture stale state
   const pausedRef = useRef(true);
   const runningRef = useRef(false);
   const draggingRef = useRef(false);
-  // True while the pointer is over an interactive control (don't auto-hide then)
   const isInteractingRef = useRef(false);
 
-  // Dragging scrub bar: track drag value separately to avoid seek spam.
+  // ---- Scrub bar state -----------------------------------------------------
+
   const [dragging, setDragging] = useState(false);
   const [dragValue, setDragValue] = useState(0);
-  const prevVolumeRef = useRef(100); // for mute/unmute toggle
+  const prevVolumeRef = useRef(100);
+
+  // ---- E8: Next Episode state ----------------------------------------------
+
+  /** Next normal episode in canonical order (null if last or unknown). */
+  const [nextEpisode, setNextEpisode] = useState<SeriesNextEpisode | null>(null);
+  /** The preselected best source for the next episode (null while loading). */
+  const [nextSource, setNextSource] = useState<StreamSourceResult | null>(null);
+  /** True while the prefetch result is being evaluated. */
+  const [nextSourceLoading, setNextSourceLoading] = useState(false);
+  /** Show the Next Episode prompt (remaining ≤ NEXT_EP_PROMPT_SECS). */
+  const [showNextEpPrompt, setShowNextEpPrompt] = useState(false);
+  /** Transitioning to next episode — prevents double-click. */
+  const [transitioning, setTransitioning] = useState(false);
 
   // ---- Store subscription --------------------------------------------------
 
@@ -112,10 +147,7 @@ export default function EmbeddedPlayerOverlay() {
     return () => unsub();
   }, []);
 
-  // ---- Playback lifecycle (StrictMode-safe via cancelledRef in hook) -------
-  //
-  // E5: build progress context from req + active profile.
-  // E5 fix: query saved progress BEFORE starting playback for resume.
+  // ---- Playback lifecycle --------------------------------------------------
 
   const profileId = profile?.id ?? null;
 
@@ -142,7 +174,7 @@ export default function EmbeddedPlayerOverlay() {
           }
         }
       } catch {
-        // Progress lookup failure is non-fatal — just start from the beginning.
+        // Progress lookup failure is non-fatal.
       }
 
       if (cancelled) return;
@@ -172,7 +204,159 @@ export default function EmbeddedPlayerOverlay() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [req, profileId, startPlayback, stopPlayback]);
 
-  // ---- Fullscreen (E5 fix) -------------------------------------------------
+  // ---- E8: Resolve next episode + prefetch when req changes ---------------
+
+  useEffect(() => {
+    // Reset next-episode state whenever the current episode changes.
+    setNextEpisode(null);
+    setNextSource(null);
+    setNextSourceLoading(false);
+    setShowNextEpPrompt(false);
+
+    if (!req || req.type !== "series" || profileId === null) return;
+    let cancelled = false;
+
+    const resolveAndPrefetch = async () => {
+      // 1. Resolve the next normal episode from the DB cache.
+      let next: SeriesNextEpisode | null = null;
+      try {
+        next = await window.mediaCenter.series.getNextEpisode({
+          seriesId: req.mediaId,
+          currentVideoId: req.playableId,
+        });
+      } catch {
+        return; // Non-fatal — series may not be cached yet.
+      }
+      if (cancelled || !next) return;
+
+      setNextEpisode(next);
+      if (import.meta.env.DEV) {
+        console.log("[next-ep] resolved:", nextEpLabel(next), next.videoId);
+      }
+
+      // 2. Get addon list for prefetching.
+      let addons;
+      try {
+        addons = await window.mediaCenter.addons.list(profileId);
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+
+      // 3. Fire-and-forget prefetch (non-blocking).
+      prefetchEpisodeSources(addons, "series", req.mediaId, next.videoId, profileId);
+      if (import.meta.env.DEV) {
+        console.log("[next-ep] prefetch triggered for", next.videoId);
+      }
+
+      // 4. Poll for the prefetch result (up to ~30s, checking every 2s).
+      //    Once sources arrive, run affinity scoring to pick the best one.
+      setNextSourceLoading(true);
+      let attempts = 0;
+      const MAX_ATTEMPTS = 15;
+      const POLL_INTERVAL = 2000;
+
+      const pollForSource = () => {
+        if (cancelled) return;
+        const cacheKey = makePrefetchKey(profileId, "series", req.mediaId, next!.videoId);
+        const cached = getCachedSources(cacheKey);
+        if (cached !== null) {
+          // Sources arrived — pick the best using affinity scoring.
+          const currentStream: StremioStream = {
+            url: req.streamUrl,
+            name: req.streamName,
+            title: req.streamTitle,
+          };
+          const best = chooseNextEpisodeSource(
+            currentStream,
+            "", // addonId unknown from PlayRequest; affinity uses other signals
+            cached,
+            settings,
+          );
+          if (!cancelled) {
+            setNextSource(best);
+            setNextSourceLoading(false);
+            if (import.meta.env.DEV) {
+              console.log(
+                "[next-ep] source preselected:",
+                best?.stream.name ?? "(none)",
+                best?.stream.url?.slice(0, 60) ?? "",
+              );
+            }
+          }
+          return;
+        }
+        attempts++;
+        if (attempts < MAX_ATTEMPTS) {
+          setTimeout(pollForSource, POLL_INTERVAL);
+        } else {
+          if (!cancelled) setNextSourceLoading(false);
+          if (import.meta.env.DEV) {
+            console.log("[next-ep] prefetch timed out — no source preselected");
+          }
+        }
+      };
+      setTimeout(pollForSource, POLL_INTERVAL);
+    };
+
+    void resolveAndPrefetch();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [req, profileId]);
+
+  // ---- E8: Show/hide next episode prompt based on remaining time -----------
+
+  useEffect(() => {
+    if (!nextEpisode || !running) {
+      setShowNextEpPrompt(false);
+      return;
+    }
+    const timePos = playbackState?.timePos ?? -1;
+    const duration = playbackState?.duration ?? -1;
+    if (timePos < 0 || duration <= 0) return;
+    const remaining = duration - timePos;
+    const shouldShow = remaining > 0 && remaining <= NEXT_EP_PROMPT_SECS;
+    setShowNextEpPrompt(shouldShow);
+    if (import.meta.env.DEV && shouldShow) {
+      console.log(`[next-ep] prompt shown — ${remaining.toFixed(0)}s remaining`);
+    }
+  }, [playbackState?.timePos, playbackState?.duration, nextEpisode, running]);
+
+  // ---- E8: Transition to next episode -------------------------------------
+
+  const handleNextEpisode = useCallback(() => {
+    if (!nextEpisode || !nextSource || transitioning || profileId === null || !req) return;
+    setTransitioning(true);
+    if (import.meta.env.DEV) {
+      console.log("[next-ep] clicked — transitioning to", nextEpLabel(nextEpisode));
+    }
+    // Build the new PlayRequest for the next episode.
+    const nextReq: PlayRequest = {
+      backend: "embedded-mpv-experimental",
+      type: "series",
+      mediaId: req.mediaId,
+      playableId: nextEpisode.videoId,
+      mediaTitle: req.mediaTitle,
+      episodeTitle: nextEpisode.title ?? undefined,
+      season: nextEpisode.season ?? undefined,
+      episode: nextEpisode.episode ?? undefined,
+      poster: req.poster,
+      streamUrl: nextSource.stream.url ?? "",
+      streamTitle: nextSource.stream.title,
+      streamName: nextSource.stream.name,
+    };
+    // Dispatch to the store — the overlay's lifecycle effect will stop the
+    // current session (including progress flush) and start the new one.
+    setEmbeddedPlayRequest(nextReq);
+    // transitioning is reset by the req-change effect resetting state.
+  }, [nextEpisode, nextSource, transitioning, profileId, req]);
+
+  // Reset transitioning flag when req changes (new episode started).
+  useEffect(() => {
+    setTransitioning(false);
+  }, [req]);
+
+  // ---- Fullscreen subscription --------------------------------------------
 
   useEffect(() => {
     const api = window.embeddedMpv;
@@ -196,7 +380,6 @@ export default function EmbeddedPlayerOverlay() {
   const scheduleHideControls = useCallback(() => {
     clearHideTimer();
     hideTimerRef.current = setTimeout(() => {
-      // Never hide while paused, dragging, or interacting with controls
       if (pausedRef.current || draggingRef.current || isInteractingRef.current) return;
       if (!runningRef.current) return;
       setControlsVisible(false);
@@ -208,7 +391,6 @@ export default function EmbeddedPlayerOverlay() {
     scheduleHideControls();
   }, [scheduleHideControls]);
 
-  // Pin controls while hovering interactive elements
   const pinControls = useCallback(() => {
     isInteractingRef.current = true;
     clearHideTimer();
@@ -220,25 +402,15 @@ export default function EmbeddedPlayerOverlay() {
     scheduleHideControls();
   }, [scheduleHideControls]);
 
-  // Keep pausedRef in sync
   const paused = playbackState?.paused ?? true;
-  useEffect(() => {
-    pausedRef.current = paused;
-  }, [paused]);
 
-  // Keep runningRef in sync
-  useEffect(() => {
-    runningRef.current = running;
-  }, [running]);
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
+  useEffect(() => { runningRef.current = running; }, [running]);
 
-  // When playback starts → show controls and start hide timer
   useEffect(() => {
-    if (running) {
-      showControls();
-    }
+    if (running) showControls();
   }, [running, showControls]);
 
-  // When paused → always show controls, cancel hide timer
   useEffect(() => {
     if (paused) {
       clearHideTimer();
@@ -248,7 +420,6 @@ export default function EmbeddedPlayerOverlay() {
     }
   }, [paused, running, clearHideTimer, scheduleHideControls]);
 
-  // When overlay is closed → clear any pending timer
   useEffect(() => {
     if (!req) {
       clearHideTimer();
@@ -256,16 +427,9 @@ export default function EmbeddedPlayerOverlay() {
     }
   }, [req, clearHideTimer]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      clearHideTimer();
-    };
-  }, [clearHideTimer]);
+  useEffect(() => () => clearHideTimer(), [clearHideTimer]);
 
-  const handleMouseActivity = useCallback(() => {
-    showControls();
-  }, [showControls]);
+  const handleMouseActivity = useCallback(() => showControls(), [showControls]);
 
   // ---- Keyboard shortcuts --------------------------------------------------
 
@@ -276,10 +440,7 @@ export default function EmbeddedPlayerOverlay() {
     function onKey(e: KeyboardEvent) {
       const tag = (document.activeElement as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-
-      // Any key shows controls
       showControls();
-
       switch (e.key) {
         case "Escape":
           e.preventDefault();
@@ -320,36 +481,31 @@ export default function EmbeddedPlayerOverlay() {
             toggleFullscreen();
           }
           break;
+        case "n":
+        case "N":
+          if (showNextEpPrompt && nextSource && !transitioning) {
+            e.preventDefault();
+            handleNextEpisode();
+          }
+          break;
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
-    req,
-    handleClose,
-    togglePause,
-    seekRelative,
-    setVolume,
-    playbackState?.volume,
-    fullscreenAvailable,
-    toggleFullscreen,
-    isFullscreen,
-    showControls,
+    req, handleClose, togglePause, seekRelative, setVolume,
+    playbackState?.volume, fullscreenAvailable, toggleFullscreen, isFullscreen,
+    showControls, showNextEpPrompt, nextSource, transitioning, handleNextEpisode,
   ]);
 
   // ---- Track select handlers -----------------------------------------------
 
   const handleSubtitleChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSubtitleTrack(Number(e.target.value));
-    },
+    (e: React.ChangeEvent<HTMLSelectElement>) => setSubtitleTrack(Number(e.target.value)),
     [setSubtitleTrack],
   );
-
   const handleAudioChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setAudioTrack(Number(e.target.value));
-    },
+    (e: React.ChangeEvent<HTMLSelectElement>) => setAudioTrack(Number(e.target.value)),
     [setAudioTrack],
   );
 
@@ -418,6 +574,16 @@ export default function EmbeddedPlayerOverlay() {
     .filter(Boolean)
     .join(" ");
 
+  // Next episode prompt content.
+  const nextEpButtonLabel = (() => {
+    if (!nextEpisode) return null;
+    if (nextSourceLoading) return "Preparing…";
+    if (!nextSource) return null; // no playable source found
+    const label = nextEpLabel(nextEpisode);
+    const epTitle = nextEpisode.title;
+    return epTitle ? `${label}: ${epTitle}` : label;
+  })();
+
   return (
     <div
       className={rootClass}
@@ -426,7 +592,6 @@ export default function EmbeddedPlayerOverlay() {
       onMouseMove={handleMouseActivity}
       onMouseEnter={handleMouseActivity}
     >
-      {/* ── Stage: fills entire overlay, canvas uses object-fit:contain ── */}
       <div className="emb-overlay__stage">
         {starting && (
           <div className="emb-overlay__loading muted small">
@@ -436,7 +601,7 @@ export default function EmbeddedPlayerOverlay() {
 
         <canvas ref={canvasRef} className="emb-overlay__canvas" />
 
-        {/* ── Header — floating top overlay ── */}
+        {/* ── Header ── */}
         <div className="emb-overlay__header">
           <div className="emb-overlay__title-area">
             <span className="emb-overlay__title" title={title}>
@@ -458,7 +623,7 @@ export default function EmbeddedPlayerOverlay() {
           </button>
         </div>
 
-        {/* ── Error banners — always visible, above header gradient ── */}
+        {/* ── Error banners ── */}
         {(!available || error) && (
           <div className="emb-overlay__errors">
             {!available && (
@@ -475,14 +640,37 @@ export default function EmbeddedPlayerOverlay() {
           </div>
         )}
 
-        {/* ── Dev stats HUD — corner, fades with controls ── */}
+        {/* ── E8: Next Episode prompt (bottom-right, above controls) ── */}
+        {showNextEpPrompt && nextEpButtonLabel && (
+          <div
+            className="emb-overlay__next-ep"
+            onMouseEnter={pinControls}
+            onMouseLeave={unpinControls}
+          >
+            <button
+              type="button"
+              className="emb-overlay__next-ep-btn"
+              onClick={handleNextEpisode}
+              disabled={!nextSource || transitioning}
+              title={nextSource ? "Play next episode (N)" : "Preparing next episode…"}
+            >
+              {transitioning
+                ? "Starting…"
+                : nextSourceLoading
+                  ? "Preparing next episode…"
+                  : `Next ▶ ${nextEpButtonLabel}`}
+            </button>
+          </div>
+        )}
+
+        {/* ── Dev stats HUD ── */}
         <div className="emb-overlay__stats muted small">
           <span>{stats.fps.toFixed(1)} fps</span>
           <span>· {stats.avgGetMs.toFixed(1)} ms</span>
           <span>· {stats.drawn}d/{stats.skipped}s</span>
         </div>
 
-        {/* ── Control bar — floating bottom overlay ── */}
+        {/* ── Controls bar ── */}
         {(running || starting) && (
           <div
             className="emb-overlay__controls"
@@ -491,7 +679,6 @@ export default function EmbeddedPlayerOverlay() {
             onFocus={pinControls}
             onBlur={unpinControls}
           >
-            {/* Play / Pause */}
             <button
               type="button"
               className="emb-overlay__ctrl emb-overlay__ctrl--icon"
@@ -503,12 +690,10 @@ export default function EmbeddedPlayerOverlay() {
               {paused ? "▶" : "⏸"}
             </button>
 
-            {/* Time display */}
             <span className="emb-overlay__time">
               {formatTime(dragging ? dragValue : timePos)}
             </span>
 
-            {/* Progress scrubber */}
             <input
               type="range"
               className="emb-overlay__progress"
@@ -523,12 +708,10 @@ export default function EmbeddedPlayerOverlay() {
               title="Seek (Left/Right arrows)"
             />
 
-            {/* Duration */}
             <span className="emb-overlay__time emb-overlay__time--dur">
               {formatTime(duration)}
             </span>
 
-            {/* Volume icon + slider */}
             <button
               type="button"
               className="emb-overlay__ctrl emb-overlay__ctrl--icon"
@@ -557,7 +740,6 @@ export default function EmbeddedPlayerOverlay() {
               title="Volume"
             />
 
-            {/* Subtitle track selector */}
             {subtitleTracks.length > 0 ? (
               <select
                 className="emb-overlay__track-select"
@@ -582,7 +764,6 @@ export default function EmbeddedPlayerOverlay() {
               </span>
             )}
 
-            {/* Audio track selector */}
             {audioTracks.length > 1 ? (
               <select
                 className="emb-overlay__track-select"
@@ -603,7 +784,6 @@ export default function EmbeddedPlayerOverlay() {
               </span>
             )}
 
-            {/* Fullscreen toggle */}
             {fullscreenAvailable && (
               <button
                 type="button"
@@ -616,7 +796,6 @@ export default function EmbeddedPlayerOverlay() {
               </button>
             )}
 
-            {/* Stop / Close */}
             <button
               type="button"
               className="emb-overlay__ctrl emb-overlay__ctrl--stop"

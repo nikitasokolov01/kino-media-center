@@ -326,3 +326,40 @@ Watching, and external MPV IPC are all untouched.
 - Do **not** touch source picker, subtitles/audio collectors for external MPV,
   profiles, library, Continue Watching, database, debrid/torrent.
 - Embedded is **never** the default. External MPV is always the fallback.
+
+### E8 Next Episode Pipeline (same branch)
+
+**Goal**: Smoother series playback — preload the next episode's sources while the
+current episode plays, then offer a one-click "Next Episode" button near the end.
+
+**New modules**:
+- `src/core/player/sourcePrefetch.ts` — module-level in-memory TTL cache (7 min)
+  keyed by `profileId:type:mediaId:playableId`. `prefetchEpisodeSources()` fans out
+  to all eligible addons in the background; non-blocking, deduped, failure-safe.
+  `getCachedSources()` returns fresh results or null.
+- `src/core/player/sourceAffinity.ts` — `extractSourceAffinity()` extracts signals
+  (addon ID, stream name, hostname, path prefix, release group, quality, codec, HDR,
+  season-pack indicators). `scoreNextEpisodeSource()` scores a candidate relative to
+  the current stream. `chooseNextEpisodeSource()` picks the top affinity match
+  (threshold 25 pts) or falls back to `chooseBestSource()`.
+
+**New IPC** (`series:get-next-episode`): returns the next normal (season ≠ 0)
+episode after a given videoId from the cached `series_episodes` table.
+DB: `getNextEpisodeAfter(seriesId, currentVideoId)` in `electron/db.ts`.
+Four-layer: `ipc-channels.ts` → `main.ts` → `preload.ts` → `preload.d.ts`.
+
+**`EmbeddedPlayerOverlay.tsx` additions**:
+- On `req` change (series only): query `series.getNextEpisode()` → if found,
+  fetch addons + fire `prefetchEpisodeSources()` → poll cache every 2 s (up to 30 s)
+  → run `chooseNextEpisodeSource()` → store as `nextSource` state.
+- `showNextEpPrompt` becomes true when `remaining ≤ 180 s` and `nextEpisode` is set.
+- "Next ▶ S01E02: Title" button shown bottom-right above controls; fades with
+  `controls-hidden`. Disabled while loading, enabled once `nextSource` is set.
+- Clicking calls `setEmbeddedPlayRequest(nextReq)` — the store update triggers the
+  overlay's lifecycle effect which flushes progress, stops current, starts next.
+- N key shortcut triggers next episode when prompt is visible.
+- `transitioning` flag prevents double-clicks.
+
+**Progress/watched correctness**: since remaining ≤ 180 s satisfies the
+`duration - timePos ≤ 900 s` completed threshold in `flushProgress()`, the current
+episode is correctly marked as watched during the `stopPlayback()` teardown.

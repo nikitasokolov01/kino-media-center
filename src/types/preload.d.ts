@@ -172,6 +172,12 @@ export interface MediaCenterApi {
       profileId: number;
       mediaId: string;
     }) => Promise<SeriesLibraryStatus>;
+    /** Returns the next normal episode after currentVideoId in position order.
+     *  Ignores Season 0 specials. Returns null if not found or already last. */
+    getNextEpisode: (args: {
+      seriesId: string;
+      currentVideoId: string;
+    }) => Promise<SeriesNextEpisode | null>;
   };
   system: {
     openExternal: (url: string) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -214,6 +220,15 @@ export interface LibraryItem {
   releaseInfo?: string | null;
   addedAt: string;
   updatedAt: string;
+}
+
+/** A single cached series episode row, returned by series.getNextEpisode(). */
+export interface SeriesNextEpisode {
+  videoId: string;
+  season: number | null;
+  episode: number | null;
+  title: string | null;
+  position: number;
 }
 
 export interface SeriesLibraryStatusEpisode {

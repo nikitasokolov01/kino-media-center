@@ -1,93 +1,129 @@
-# Session handoff — E7: Embedded as default player when flag is ON
+# Current Session Handoff — E8 Next Episode Pipeline
 
-Read `CLAUDE.md` (section 10 especially) before making changes.
+## Status: Complete (TypeScript clean)
 
-## 1. Branch
-`experiment/libmpv-native`
+---
 
-## 2. Embedded MPV stage history
-- ✅ **E1–E5** — See previous handoff for full history.
-- ✅ **E6** — YouTube/Netflix UX: video fills full area, floating chrome, auto-hide.
-- ✅ **E7** — Embedded becomes the primary/default player when `experimentalEmbeddedPlayer` is ON.
+## What Was Built
 
-## 3. E7 changes (this session)
+### E6 — Embedded Player YouTube/Netflix UX (complete)
+- Stage fills entire window; all chrome (header, controls, stats) as `position:absolute` floating overlays
+- Auto-hide after 2500ms inactivity (`controls-hidden` CSS class)
+- `is-fullscreen` React class mirrors BrowserWindow fullscreen state
+- Esc: first exits fullscreen, second closes overlay
 
-### Goal
-When `experimentalEmbeddedPlayer` is ON, clicking Play on any direct HTTP/HTTPS
-source should open the embedded overlay by default. External MPV is demoted to a
-secondary "Open in MPV" fallback button. Auto-play best source also uses embedded.
+### E7 — Embedded as Default Player When Flag ON (complete)
+- `StreamCard`: when `experimentalEmbeddedPlayer` ON, "▶ Play" (primary) → embedded; "Open in MPV" (secondary fallback)
+- `SourcesSection.handlePlayBest`: picks backend from flag
+- Flag OFF: all existing MPV-primary behavior unchanged
 
-### `src/components/StreamCard.tsx`
+### E8 — Next Episode Pipeline (complete)
+Background source prefetching, source affinity scoring, and "Next Episode" overlay prompt for series.
 
-**`renderActions()` for `playable`/`hls` case** — new branch at the top:
+---
 
-```tsx
-if (settings.experimentalEmbeddedPlayer) {
-  return (
-    <>
-      <button /* primary */ onClick={handlePlayEmbedded}>▶ Play</button>
-      {mpvViable && <button /* secondary */ onClick={handlePlayInMpv}>Open in MPV</button>}
-    </>
-  );
-}
-// ... existing MPV-primary / browser-secondary logic unchanged
-```
+## E8 Architecture
 
-- The old "⬡ Play Embedded" tertiary button is gone — embedded is now primary.
-- "Open in MPV" is the fallback (only shown when `mpvViable`).
-- Flag OFF: behavior is completely unchanged.
+### New Files
 
-### `src/components/SourcesSection.tsx`
+#### `src/core/player/sourcePrefetch.ts`
+In-memory TTL cache for pre-fetched stream sources.
+- `CACHE_TTL_MS = 7 * 60 * 1000` (7 minutes)
+- `Map<string, CacheEntry>` keyed by `profileId:type:mediaId:playableId`
+- `inFlight: Set<string>` prevents duplicate concurrent fetches
+- `makePrefetchKey(profileId, type, mediaId, playableId): string`
+- `getCachedSources(key): StreamSourceResult[] | null`
+- `setCachedSources(key, results): void`
+- `prefetchEpisodeSources(addons, type, mediaId, playableId, profileId): void` — fire-and-forget; fans out across all addons supporting streams for the type; per-addon failures silently ignored
 
-**`handlePlayBest`** — backend selected from flag:
+#### `src/core/player/sourceAffinity.ts`
+Additive affinity scoring to prefer "same release pack" sources for next episode.
+- `extractSourceAffinity(stream, addonId): SourceAffinity` — extracts hostname, path prefix, release group, quality, codec, HDR, season-pack from stream fields
+- `scoreNextEpisodeSource(current, candidate): AffinityScore` — returns `{score, reasons[]}`
+- `chooseNextEpisodeSource(currentStream, currentAddonId, candidates, settings): StreamSourceResult | null`
+  - Filters to playable candidates
+  - Scores all; if best >= AFFINITY_THRESHOLD (25), picks highest scorer (ties broken by quality)
+  - Falls back to chooseBestSource() if no candidate reaches threshold
 
-```ts
-const backend = settings.experimentalEmbeddedPlayer
-  ? "embedded-mpv-experimental"
-  : "external-mpv";
-```
+**Affinity weights:**
+- Same addon ID: 40
+- Same stream name: 30
+- Same hostname: 25
+- Same release group: 20
+- Same path prefix: 15
+- Same quality tier: 10
+- Season-pack indicator: 10
+- Same codec: 5
+- Same HDR: 5
 
-- MPV-specific dispatch options (`subtitleAddons`, `startSeconds`, `audioLanguageOverride`)
-  are only forwarded when `backend === "external-mpv"`.
-- "Play Best Source" button tooltip updated to mention embedded vs MPV.
+### Modified Files
 
-## 4. File map (E7)
+#### `electron/ipc-channels.ts`
+Added: `SeriesGetNextEpisode: "series:get-next-episode"`
 
-| File | Change |
-|---|---|
-| `src/components/StreamCard.tsx` | `renderActions()`: embedded-first branch when flag ON; removed old "⬡ Play Embedded" tertiary button |
-| `src/components/SourcesSection.tsx` | `handlePlayBest`: backend from flag; MPV options conditional; button title updated |
-| `CLAUDE.md` | Section 10 updated with E7 |
-| `docs/current-session-handoff.md` | This file |
+#### `electron/db.ts`
+Added `getNextEpisodeAfter(seriesId, currentVideoId): SeriesEpisode | null`
+- Reads series_episodes for the series, filters out Season 0 specials
+- Finds the current episode by videoId, returns the next one in position order
+- Returns null if current is the last episode or not found
 
-## 5. Build steps
+#### `electron/main.ts`
+Added IPC handler for `IPC.SeriesGetNextEpisode`.
 
-```
-npm run dev    # development
-npm run build  # production
-```
+#### `electron/preload.ts`
+Added `series.getNextEpisode` to contextBridge binding.
 
-No native Rust addon rebuild needed — all changes are TypeScript only.
+#### `src/types/preload.d.ts`
+Added `SeriesNextEpisode` interface and `getNextEpisode` method to `MediaCenterApi.series`.
 
-## 6. Acceptance tests
+#### `src/components/EmbeddedPlayerOverlay.tsx`
+E8 additions:
+- State: nextEpisode, nextSource, nextSourceLoading, showNextEpPrompt, transitioning
+- Prefetch effect: on req change for series, resolves next episode via IPC, kicks off prefetch, polls cache, runs affinity scoring
+- Remaining-time effect: when timePos within 180s of duration, shows next-ep prompt
+- handleNextEpisode(): builds next PlayRequest, calls setEmbeddedPlayRequest — lifecycle handles flush/stop/start
+- N key shortcut triggers handleNextEpisode when prompt is visible
 
-### Flag OFF
-1. Play any direct URL source → "▶ Play with MPV" is primary. ✓
-2. Auto-play best source → launches external MPV. ✓
-3. No "Open in MPV" secondary button visible (behavior unchanged). ✓
+#### `src/styles.css`
+Added .emb-overlay__next-ep and .emb-overlay__next-ep-btn styles.
 
-### Flag ON
-4. Play any direct URL source → "▶ Play" is primary, opens embedded overlay. ✓
-5. "Open in MPV" secondary button is visible as fallback. ✓
-6. Click "Open in MPV" → external MPV launches exactly that source. ✓
-7. Auto-play best source → opens embedded overlay. ✓
-8. Auto-play followed by clicking another source's "▶ Play" → stops old embedded, starts new one. ✓
-9. Progress/Continue Watching still updates for embedded sessions. ✓
-10. External MPV progress still works when "Open in MPV" fallback is used. ✓
+---
 
-## 7. Guardrails (unchanged)
-- Do **not** touch `electron/mpv.ts`, `electron/mpvIpc.ts`, external-mpv dispatch.
-- Do **not** touch source picker, subtitles/audio for external MPV, profiles,
-  library, Continue Watching, database, debrid/torrent.
-- Embedded is gated on `experimentalEmbeddedPlayer` flag — external MPV is always
-  available as a fallback when the flag is ON.
+## IPC Layer Summary (E8)
+
+All four layers updated symmetrically:
+- Channel: electron/ipc-channels.ts — SeriesGetNextEpisode
+- Handler: electron/main.ts — ipcMain.handle(...)
+- Binding: electron/preload.ts — series.getNextEpisode
+- Type: src/types/preload.d.ts — SeriesNextEpisode + method sig
+
+---
+
+## Build State
+
+- `npx tsc --noEmit` -> clean (no errors)
+- No new npm dependencies added
+- No database schema changes (uses existing series_episodes table)
+
+---
+
+## Testing / Acceptance
+
+1. Install a series addon (e.g. Cinemeta)
+2. Open a series with a cached episode list (visit Media page — episodes must load for cache to populate)
+3. Start playing an episode via embedded player (flag ON)
+4. With <=3 minutes remaining, the "Next Episode ->" button should appear bottom-right
+5. Click it — overlay transitions to next episode, progress for current episode is saved
+6. N key should also trigger the transition
+7. Source should prefer the same provider/hostname as the current stream when possible
+8. If next episode is the last, the button should not appear
+
+---
+
+## Guardrails (unchanged)
+
+- External MPV path completely untouched
+- No debrid, no torrent resolving, no hardcoded providers
+- All embedded code gated on experimentalEmbeddedPlayer flag
+- No SQLite schema changes; no stream URL persistence
+- Source prefetch cache is in-memory only (cleared on app restart)

@@ -2536,6 +2536,49 @@ a:hover { text-decoration: underline; }
   cursor: none;
 }
 
+/* ── E8: Next Episode prompt ── */
+/* Appears bottom-right, above the controls bar, fades with controls-hidden. */
+.emb-overlay__next-ep {
+  position: absolute;
+  bottom: 72px;    /* sits above the controls gradient */
+  right: 16px;
+  z-index: 12;
+  transition: opacity 300ms ease;
+}
+.emb-overlay.controls-hidden .emb-overlay__next-ep {
+  opacity: 0;
+  pointer-events: none;
+}
+.emb-overlay__next-ep-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.emb-overlay__next-ep-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.6);
+  transform: translateY(-1px);
+}
+.emb-overlay__next-ep-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
 /* ── .is-fullscreen (React class based on BrowserWindow state) ── */
 /* The overlay already covers the full window (fixed inset:0).
    This class is a styling marker; the background ensures no flash. */
