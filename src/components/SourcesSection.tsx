@@ -328,27 +328,14 @@ export default function SourcesSection({
 
   const sectionClass = `sources${inline ? " sources--inline" : ""}`;
 
-  // Series with no episode picked yet.
-  if (!selected) {
-    return (
-      <section className={sectionClass}>
-        <header className="sources__header">
-          <h2>Sources</h2>
-        </header>
-        <div className="empty">Select an episode to view sources.</div>
-      </section>
-    );
-  }
+  // Series with no episode picked yet — nothing to show.
+  if (!selected) return null;
 
   if (eligible.length === 0) {
     return (
       <section className={sectionClass}>
-        {!inline && (
-          <header className="sources__header">
-            <h2>Sources</h2>
-          </header>
-        )}
-        <div className="empty">
+        {!inline && <header className="sources__header"><h2>Sources</h2></header>}
+        <div className="empty muted small">
           None of your installed addons provide a <code>stream</code> resource
           for <code>{selected.type}</code>.
         </div>
@@ -356,38 +343,44 @@ export default function SourcesSection({
     );
   }
 
-  // Season/episode are only meaningful when `selected` is a series pick.
-  const season =
-    selected.type === "series" ? selected.season : undefined;
-  const episode =
-    selected.type === "series" ? selected.episode : undefined;
+  const season = selected.type === "series" ? selected.season : undefined;
+  const episode = selected.type === "series" ? selected.episode : undefined;
 
-  const autoMode = settings.autoPlayBestSource;
-  // Results are settled for THIS selection (not a stale prior one).
+  // Results settled for THIS selection (not a stale prior one).
   const settled = completedSel === selected;
 
-  // The source whose label/marker we surface: a manual pick if any, else the
-  // auto-selected best.
+  // Best result for the "▶ Play" button label / badge.
   const currentResult =
     results.find((r) => r.key === currentSourceKey) ?? bestResult ?? null;
   const currentQuality = currentResult
     ? prettyQuality(detectResolution(streamText(currentResult.stream)))
     : null;
-  const sourcesButtonLabel = currentQuality ? `Source: ${currentQuality}` : "Sources";
 
-  const autoStatus =
-    loading || !settled
-      ? "Finding best source…"
-      : bestResult
-        ? "Playing best source…"
-        : "No playable source found";
+  // Sources button label
+  const sourcesButtonLabel = sourcesOpen
+    ? "Hide Sources"
+    : currentQuality
+      ? `Sources (${currentQuality})`
+      : "Sources";
 
-  // Shared failure banner (both modes).
+  // Play button state
+  const canPlay = !loading && settled && !!bestResult;
+  const playLabel = playingBest
+    ? "Starting…"
+    : loading || !settled
+      ? "Loading…"
+      : !bestResult
+        ? "No Source"
+        : settings.experimentalEmbeddedPlayer
+          ? "▶ Play"
+          : "▶ Play";
+
+  // Failure banner
   const failuresBanner =
     failures.length > 0 ? (
       <div className="warning-banner" role="alert">
         {failures.length} addon{failures.length === 1 ? "" : "s"} couldn't be
-        reached — showing results from the rest.
+        reached.
         <details>
           <summary>Details</summary>
           <ul className="failure-list">
@@ -398,21 +391,19 @@ export default function SourcesSection({
             ))}
           </ul>
         </details>
-        <div style={{ marginTop: 8 }}>
-          <button type="button" className="ghost-button" onClick={run}>
-            Retry failed addons
-          </button>
-        </div>
+        <button type="button" className="ghost-button" onClick={run}
+          style={{ marginTop: 8 }}>
+          Retry
+        </button>
       </div>
     ) : null;
 
-  // The full source picker (skeletons / empty / cards). Used directly in manual
-  // mode and inside the Sources dropdown panel in auto-play mode.
+  // Source list (shared by both inline and full, inside the open panel)
   const renderSourceList = () => {
     if (loading) {
       return (
         <div className="sources__list">
-          {Array.from({ length: 4 }).map((_, i) => (
+          {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="stream-card stream-card--skeleton" aria-hidden>
               <div className="stream-card__main">
                 <div className="skeleton-line" style={{ width: "40%" }} />
@@ -426,9 +417,8 @@ export default function SourcesSection({
     }
     if (completed && results.length === 0 && failures.length === 0) {
       return (
-        <div className="empty">
-          No sources found for {selected.type} <code>{selected.id}</code> in any
-          installed addon.
+        <div className="empty muted small">
+          No sources found for this {selected.type}.
         </div>
       );
     }
@@ -450,16 +440,11 @@ export default function SourcesSection({
               startSeconds={startSeconds}
               subtitleAddons={addons}
               isAnime={isAnime}
-              autoSelected={
-                settings.autoSelectSource && bestResult?.key === r.key
-              }
+              autoSelected={settings.autoSelectSource && bestResult?.key === r.key}
               current={currentSourceKey === r.key}
               onPlayed={() => {
-                // Manual pick becomes the active/current source; in auto-play
-                // mode also collapse the dropdown. The main process closes any
-                // existing MPV session before launching the new one.
                 setCurrentSourceKey(r.key);
-                if (autoMode) setSourcesOpen(false);
+                setSourcesOpen(false);
               }}
             />
           ))}
@@ -469,46 +454,58 @@ export default function SourcesSection({
     return null;
   };
 
-  // ---- Auto-play mode: compact status + on-demand Sources dropdown ---------
-  if (autoMode) {
+  // ---- Inline mode (series episode card) -----------------------------------
+  // Shows Play + Sources side-by-side, no heading, compact.
+  if (inline) {
     return (
-      <section className={`${sectionClass} sources--auto`}>
-        <header className="sources__header">
-          {inline ? (
-            <span className="sources__inline-label">Sources</span>
-          ) : (
-            <h2>Sources</h2>
-          )}
-          <span className="muted small sources__status" role="status">
-            {autoStatus}
-            {selected.type === "series" &&
-              typeof season === "number" &&
-              typeof episode === "number" && (
-                <>
-                  {" "}· S{String(season).padStart(2, "0")}E
-                  {String(episode).padStart(2, "0")}
-                </>
-              )}
-          </span>
-          <span className="sources__spacer" />
-          {settled && (
+      <div className={`${sectionClass} sources--play-bar`}>
+        <div className="sources__play-row">
+          <button
+            type="button"
+            className="primary-button sources__play-btn"
+            onClick={() => {
+              if (canPlay) {
+                setCurrentSourceKey(bestResult!.key);
+                void handlePlayBest("manual");
+              }
+            }}
+            disabled={!canPlay || playingBest}
+            title={
+              !canPlay
+                ? loading
+                  ? "Loading sources…"
+                  : "No playable source found"
+                : settings.experimentalEmbeddedPlayer
+                  ? "Play with embedded player"
+                  : "Play with MPV"
+            }
+          >
+            {playLabel}
+          </button>
+
+          <button
+            type="button"
+            className="ghost-button sources__sources-btn"
+            onClick={() => setSourcesOpen((o) => !o)}
+            aria-expanded={sourcesOpen}
+            disabled={loading && results.length === 0}
+            title="Choose a different source"
+          >
+            {sourcesButtonLabel}
+          </button>
+
+          {!loading && (
             <button
               type="button"
-              className="ghost-button"
-              onClick={() => setSourcesOpen((o) => !o)}
-              aria-expanded={sourcesOpen}
-              aria-haspopup="true"
-              title="Open the source picker to choose a different source"
+              className="ghost-button ghost-button--xs"
+              onClick={run}
+              title="Refresh sources"
+              aria-label="Refresh sources"
             >
-              {sourcesButtonLabel} ▾
+              ↺
             </button>
           )}
-          {!loading && (
-            <button type="button" className="ghost-button" onClick={run}>
-              Refresh
-            </button>
-          )}
-        </header>
+        </div>
 
         {bestError && (
           <div className="stream-card__action-error" role="alert">
@@ -518,53 +515,59 @@ export default function SourcesSection({
 
         {failuresBanner}
 
-        {sourcesOpen && <div className="sources__panel">{renderSourceList()}</div>}
-      </section>
+        {sourcesOpen && (
+          <div className="sources__panel">
+            {renderSourceList()}
+          </div>
+        )}
+      </div>
     );
   }
 
-  // ---- Manual mode: the full visible source list (unchanged behavior) ------
+  // ---- Full mode (movie page) ----------------------------------------------
+  // Shows a prominent play section + collapsible source list.
   return (
     <section className={sectionClass}>
-      <header className="sources__header">
-        {inline ? (
-          <span className="sources__inline-label">Sources</span>
-        ) : (
-          <h2>Sources</h2>
-        )}
-        <span className="muted small">
-          {loading
-            ? `Searching ${eligible.length} addon${eligible.length === 1 ? "" : "s"}…`
-            : `${results.length} source${results.length === 1 ? "" : "s"} from ${eligible.length - failures.length}/${eligible.length} addon${eligible.length === 1 ? "" : "s"}`}
-          {selected.type === "series" && typeof season === "number" && typeof episode === "number" && (
-            <>
-              {" "}· S{String(season).padStart(2, "0")}E{String(episode).padStart(2, "0")}
-            </>
-          )}
-        </span>
-        <span className="sources__spacer" />
-        {/* Manual best-play button when auto-select is on. */}
-        {bestResult && (
-          <button
-            type="button"
-            className="primary-button sources__play-best"
-            onClick={() => void handlePlayBest("manual")}
-            disabled={playingBest}
-            title={
-              settings.experimentalEmbeddedPlayer
-                ? "Play the auto-selected best source in the embedded player"
-                : "Play the auto-selected best source with MPV"
+      <div className="sources__play-row sources__play-row--full">
+        <button
+          type="button"
+          className="primary-button sources__play-btn sources__play-btn--large"
+          onClick={() => {
+            if (canPlay) {
+              setCurrentSourceKey(bestResult!.key);
+              void handlePlayBest("manual");
             }
-          >
-            {playingBest ? "Launching…" : "▶ Play Best Source"}
-          </button>
-        )}
+          }}
+          disabled={!canPlay || playingBest}
+          title={
+            !canPlay
+              ? loading
+                ? "Loading sources…"
+                : "No playable source found"
+              : settings.experimentalEmbeddedPlayer
+                ? "Play with embedded player"
+                : "Play with MPV"
+          }
+        >
+          {playLabel}
+        </button>
+
+        <button
+          type="button"
+          className="ghost-button sources__sources-btn"
+          onClick={() => setSourcesOpen((o) => !o)}
+          aria-expanded={sourcesOpen}
+          disabled={loading && results.length === 0}
+        >
+          {sourcesButtonLabel}
+        </button>
+
         {!loading && (
           <button type="button" className="ghost-button" onClick={run}>
             Refresh
           </button>
         )}
-      </header>
+      </div>
 
       {bestError && (
         <div className="stream-card__action-error" role="alert">
@@ -574,7 +577,11 @@ export default function SourcesSection({
 
       {failuresBanner}
 
-      {renderSourceList()}
+      {sourcesOpen && (
+        <div className="sources__panel">
+          {renderSourceList()}
+        </div>
+      )}
     </section>
   );
 }

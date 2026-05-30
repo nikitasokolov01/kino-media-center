@@ -2360,15 +2360,33 @@ a:hover { text-decoration: underline; }
   margin-top: 2px;
 }
 
-/* Source auto-selection: badge + highlighted card + Play Best button */
-.sources__play-best {
-  margin-right: 8px;
+/* Source play row — explicit Play + Sources buttons (replaces auto-play) */
+.sources__play-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.sources__autoplay-note {
-  margin-right: 8px;
-  font-size: 12px;
-  color: var(--accent);
-  font-weight: 600;
+.sources__play-row--full {
+  margin-bottom: 12px;
+}
+.sources__play-btn {
+  font-size: 15px;
+  padding: 8px 20px;
+  font-weight: 700;
+}
+.sources__play-btn--large {
+  font-size: 16px;
+  padding: 10px 28px;
+}
+.sources__sources-btn {
+  /* subtle — secondary action */
+}
+.sources--play-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* ─── Embedded player overlay (E4/E5/E6) ─────────────────────────────────
@@ -2411,16 +2429,29 @@ a:hover { text-decoration: underline; }
 }
 
 /* ── Loading indicator centred in stage ── */
-.emb-overlay__loading {
+.emb-overlay__loading-indicator {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.5);
+  gap: 12px;
+  color: rgba(255, 255, 255, 0.6);
   font-size: 13px;
   pointer-events: none;
-  z-index: 1;
+  z-index: 2;
+}
+.emb-overlay__spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255,255,255,0.15);
+  border-top-color: rgba(255,255,255,0.7);
+  border-radius: 50%;
+  animation: emb-spin 0.8s linear infinite;
+}
+@keyframes emb-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── Header — floats at top, gradient from top, fades with controls ── */
@@ -2429,10 +2460,9 @@ a:hover { text-decoration: underline; }
   top: 0; left: 0; right: 0;
   z-index: 11;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
-  /* extra bottom padding so the gradient extends down over the canvas */
-  padding: 8px 12px 36px;
+  padding: 10px 12px 40px;
   background: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 0.85) 0%,
@@ -2440,6 +2470,12 @@ a:hover { text-decoration: underline; }
   );
   transition: opacity 300ms ease;
   pointer-events: auto;
+}
+.emb-overlay__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 .emb-overlay__title-area {
   display: flex;
@@ -2512,16 +2548,43 @@ a:hover { text-decoration: underline; }
   bottom: 0; left: 0; right: 0;
   z-index: 11;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  /* extra top padding so the gradient extends up over the canvas */
-  padding: 32px 12px 10px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 40px 12px 10px;
   background: linear-gradient(
     to top,
-    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0.88) 0%,
     rgba(0, 0, 0, 0)   100%
   );
   transition: opacity 300ms ease;
+}
+/* Progress bar row */
+.emb-overlay__progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Transport row: play, volume, spacer, tracks, source, fullscreen, stop */
+.emb-overlay__transport {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.emb-overlay__transport-spacer { flex: 1; }
+/* Large play/pause button */
+.emb-overlay__ctrl--play {
+  font-size: 20px;
+  padding: 2px 8px;
+  min-width: 36px;
+}
+/* Ghost / active state for toggle buttons (stats, source) */
+.emb-overlay__ctrl--ghost {
+  color: rgba(255,255,255,0.45);
+}
+.emb-overlay__ctrl.is-active,
+.emb-overlay__ctrl--ghost.is-active {
+  color: var(--accent, #6aa3ff);
+  background: rgba(100,163,255,0.15);
 }
 
 /* ── Auto-hide: fade chrome after inactivity ── */
@@ -2675,6 +2738,145 @@ a:hover { text-decoration: underline; }
   border-color: rgba(255, 255, 255, 0.4);
 }
 
+
+/* ── In-player source picker panel (Part 5) ── */
+.emb-overlay__source-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 340px;
+  max-width: 90vw;
+  z-index: 20;
+  background: rgba(10, 12, 20, 0.96);
+  backdrop-filter: blur(16px);
+  border-left: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  pointer-events: auto;
+  /* slide in from right */
+  animation: emb-panel-in 0.18s ease;
+}
+@keyframes emb-panel-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.emb-overlay__source-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+.emb-overlay__source-panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.6);
+}
+.emb-overlay__source-panel-loading,
+.emb-overlay__source-panel-empty {
+  padding: 16px 12px;
+  text-align: center;
+}
+.emb-overlay__source-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.emb-overlay__source-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.emb-overlay__source-item.is-playing {
+  background: rgba(100, 163, 255, 0.1);
+}
+.emb-overlay__source-item-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+  padding: 10px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-radius: var(--radius);
+  transition: background 0.12s;
+}
+.emb-overlay__source-item-btn:hover {
+  background: rgba(255,255,255,0.06);
+}
+.emb-overlay__source-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.emb-overlay__source-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.emb-overlay__source-title {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.emb-overlay__source-quality {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent, #6aa3ff);
+  background: rgba(100,163,255,0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.emb-overlay__source-addon {
+  font-size: 10px;
+  color: rgba(255,255,255,0.3);
+}
+.emb-overlay__source-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.emb-overlay__source-badge--playing {
+  background: var(--accent, #6aa3ff);
+  color: #0b1020;
+}
+.emb-overlay__source-badge--best {
+  background: rgba(100,163,255,0.2);
+  color: var(--accent, #6aa3ff);
+  border: 1px solid rgba(100,163,255,0.4);
+}
+/* When source panel is open, keep controls visible and don't cursor:none */
+.emb-overlay.source-panel-open .emb-overlay__header,
+.emb-overlay.source-panel-open .emb-overlay__controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+.emb-overlay.source-panel-open {
+  cursor: default;
+}
+
 /* Experimental embedded player page */
 .exp-badge {
   display: inline-block;
@@ -2717,8 +2919,8 @@ a:hover { text-decoration: underline; }
   color: var(--accent);
   font-weight: 600;
 }
-.sources--auto .sources__panel {
-  margin-top: 10px;
+.sources__panel {
+  margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel);

@@ -1,129 +1,108 @@
-# Current Session Handoff — E8 Next Episode Pipeline
+# Current Session Handoff — Player UX Polish (Alpha Prep)
 
 ## Status: Complete (TypeScript clean)
 
 ---
 
-## What Was Built
+## What Was Built This Session
 
-### E6 — Embedded Player YouTube/Netflix UX (complete)
-- Stage fills entire window; all chrome (header, controls, stats) as `position:absolute` floating overlays
-- Auto-hide after 2500ms inactivity (`controls-hidden` CSS class)
-- `is-fullscreen` React class mirrors BrowserWindow fullscreen state
-- Esc: first exits fullscreen, second closes overlay
+### Part 1 — Remove Electron Default Menu
+- `electron/main.ts`: added `Menu` to imports, called `Menu.setApplicationMenu(null)` in `app.whenReady()`.
+- The native File/Edit/View/Window/Help menu bar is gone. Custom React sidebar nav is unchanged.
 
-### E7 — Embedded as Default Player When Flag ON (complete)
-- `StreamCard`: when `experimentalEmbeddedPlayer` ON, "▶ Play" (primary) → embedded; "Open in MPV" (secondary fallback)
-- `SourcesSection.handlePlayBest`: picks backend from flag
-- Flag OFF: all existing MPV-primary behavior unchanged
+### Part 2 — Fix Fullscreen Stuck on Close
+- `EmbeddedPlayerOverlay.tsx`: added `isFullscreenRef` (ref mirror of `isFullscreen` state).
+- New effect: when `req` goes null (overlay closing for any reason), calls `window.embeddedMpv?.setFullscreen(false)` and resets `setIsFullscreen(false)`.
+- Covers all close paths: close button, Esc, next-episode transition, `clearEmbeddedPlayRequest()`.
 
-### E8 — Next Episode Pipeline (complete)
-Background source prefetching, source affinity scoring, and "Next Episode" overlay prompt for series.
+### Part 3 — Explicit Play + Sources UX (No Auto-play on Selection)
+**`SourcesSection.tsx` rewritten:**
+- Removed `autoPlayedSelRef` and the `autoPlayBestSource` auto-trigger effect.
+- Sources still load silently in background when a selection is made.
+- New **inline variant** (series episode card): `[▶ Play] [Sources ▾] [↺]` row. Play calls `handlePlayBest`; Sources toggles the list panel.
+- New **full variant** (movie page): `[▶ Play Best Source] [Sources ▾] [Refresh]` row above collapsible source list.
+- Both variants show the source list only when Sources button is clicked.
+- `sourcesOpen` state drives panel visibility.
 
----
+**`styles.css` updated:**
+- `.sources__play-row`, `.sources__play-btn`, `.sources__play-btn--large`, `.sources--play-bar` added.
+- `.sources__panel` (generalised from `.sources--auto .sources__panel`).
+- Old `.sources__play-best` and `.sources--auto .sources__panel` removed.
 
-## E8 Architecture
+### Part 4 — Embedded Player UI Polish (Netflix-style)
+**`EmbeddedPlayerOverlay.tsx`:**
+- Dev stats HUD hidden by default; toggle via **ⓘ button** in header. `statsVisible` state.
+- Header: `title-area` (left flex) + `header-actions` (right: ⓘ stats toggle + ✕ close).
+- Controls split into two rows:
+  - `.emb-overlay__progress-row`: time / seek bar / duration
+  - `.emb-overlay__transport`: ▶ play·pause / mute / volume / spacer / CC / audio / ⚙ source / fullscreen / ⏹ stop
+- Loading: replaced text spinner with CSS `@keyframes emb-spin` animated circle + label.
+- "EXPERIMENTAL" badge renamed to "BETA".
 
-### New Files
+**`styles.css` updated:**
+- `.emb-overlay__controls` is now `flex-direction: column` with two child rows.
+- `.emb-overlay__progress-row`, `.emb-overlay__transport`, `.emb-overlay__transport-spacer`.
+- `.emb-overlay__ctrl--play` (larger play button), `.emb-overlay__ctrl--ghost`, `.emb-overlay__ctrl.is-active`.
+- `.emb-overlay__loading` replaced by `.emb-overlay__loading-indicator` + `.emb-overlay__spinner` + `@keyframes emb-spin`.
+- `.emb-overlay__header` updated for new `header-actions` child.
 
-#### `src/core/player/sourcePrefetch.ts`
-In-memory TTL cache for pre-fetched stream sources.
-- `CACHE_TTL_MS = 7 * 60 * 1000` (7 minutes)
-- `Map<string, CacheEntry>` keyed by `profileId:type:mediaId:playableId`
-- `inFlight: Set<string>` prevents duplicate concurrent fetches
-- `makePrefetchKey(profileId, type, mediaId, playableId): string`
-- `getCachedSources(key): StreamSourceResult[] | null`
-- `setCachedSources(key, results): void`
-- `prefetchEpisodeSources(addons, type, mediaId, playableId, profileId): void` — fire-and-forget; fans out across all addons supporting streams for the type; per-addon failures silently ignored
+### Part 5 — In-Player Source Picker Drawer
+**`EmbeddedPlayerOverlay.tsx`:**
+- New state: `sourcePanelOpen`, `overlayResults`, `overlayLoading`, `overlayFetchError`, `currentSourceKey`.
+- `openSourcePanel()`: async; fetches all eligible addons → fans out stream requests → deduplicates → sets `overlayResults`. Uses `addonSupportsResource` + `streamDedupKey` + `window.mediaCenter.streams.fetch`.
+- `handleOverlaySourceSelect(result)`: closes panel, builds new `PlayRequest` with same metadata but new stream URL, calls `setEmbeddedPlayRequest(newReq)` → lifecycle effect flushes progress + restarts with new source.
+- Reset effect: when `req?.playableId` changes (episode transitions), clears `overlayResults`, closes panel, resets `currentSourceKey`.
+- ⚙ button in transport row toggles panel open/close.
+- Panel UI: slide-in drawer (right edge), source list with name/quality badge/addon/playing badge/best badge. Currently-playing URL matched to badge.
+- `source-panel-open` class on root keeps chrome visible while panel is open.
 
-#### `src/core/player/sourceAffinity.ts`
-Additive affinity scoring to prefer "same release pack" sources for next episode.
-- `extractSourceAffinity(stream, addonId): SourceAffinity` — extracts hostname, path prefix, release group, quality, codec, HDR, season-pack from stream fields
-- `scoreNextEpisodeSource(current, candidate): AffinityScore` — returns `{score, reasons[]}`
-- `chooseNextEpisodeSource(currentStream, currentAddonId, candidates, settings): StreamSourceResult | null`
-  - Filters to playable candidates
-  - Scores all; if best >= AFFINITY_THRESHOLD (25), picks highest scorer (ties broken by quality)
-  - Falls back to chooseBestSource() if no candidate reaches threshold
+**`styles.css`:**
+- `.emb-overlay__source-panel`, `@keyframes emb-panel-in`.
+- `.emb-overlay__source-panel-header`, `.emb-overlay__source-panel-title`.
+- `.emb-overlay__source-list`, `.emb-overlay__source-item`, `.emb-overlay__source-item-btn`.
+- `.emb-overlay__source-name`, `.emb-overlay__source-meta`, `.emb-overlay__source-quality`, `.emb-overlay__source-addon`.
+- `.emb-overlay__source-badge`, `--playing`, `--best`.
+- `.emb-overlay.source-panel-open` overrides controls-hidden to keep chrome visible.
 
-**Affinity weights:**
-- Same addon ID: 40
-- Same stream name: 30
-- Same hostname: 25
-- Same release group: 20
-- Same path prefix: 15
-- Same quality tier: 10
-- Season-pack indicator: 10
-- Same codec: 5
-- Same HDR: 5
-
-### Modified Files
-
-#### `electron/ipc-channels.ts`
-Added: `SeriesGetNextEpisode: "series:get-next-episode"`
-
-#### `electron/db.ts`
-Added `getNextEpisodeAfter(seriesId, currentVideoId): SeriesEpisode | null`
-- Reads series_episodes for the series, filters out Season 0 specials
-- Finds the current episode by videoId, returns the next one in position order
-- Returns null if current is the last episode or not found
-
-#### `electron/main.ts`
-Added IPC handler for `IPC.SeriesGetNextEpisode`.
-
-#### `electron/preload.ts`
-Added `series.getNextEpisode` to contextBridge binding.
-
-#### `src/types/preload.d.ts`
-Added `SeriesNextEpisode` interface and `getNextEpisode` method to `MediaCenterApi.series`.
-
-#### `src/components/EmbeddedPlayerOverlay.tsx`
-E8 additions:
-- State: nextEpisode, nextSource, nextSourceLoading, showNextEpPrompt, transitioning
-- Prefetch effect: on req change for series, resolves next episode via IPC, kicks off prefetch, polls cache, runs affinity scoring
-- Remaining-time effect: when timePos within 180s of duration, shows next-ep prompt
-- handleNextEpisode(): builds next PlayRequest, calls setEmbeddedPlayRequest — lifecycle handles flush/stop/start
-- N key shortcut triggers handleNextEpisode when prompt is visible
-
-#### `src/styles.css`
-Added .emb-overlay__next-ep and .emb-overlay__next-ep-btn styles.
+**New imports added to overlay:**
+- `addonSupportsResource` from `../core/stremio/meta.js`
+- `streamDedupKey` from `../core/stremio/streams.js`
+- `chooseBestSource`, `detectResolution` from `../core/player/sourceRanking.js`
 
 ---
 
-## IPC Layer Summary (E8)
+## Stability Pass (same session, previous tasks #46–48)
 
-All four layers updated symmetrically:
-- Channel: electron/ipc-channels.ts — SeriesGetNextEpisode
-- Handler: electron/main.ts — ipcMain.handle(...)
-- Binding: electron/preload.ts — series.getNextEpisode
-- Type: src/types/preload.d.ts — SeriesNextEpisode + method sig
+- `useEmbeddedPlayback.ts`: `friendlyError()` helper, 30s start timeout, `beforeunload` flush, `isDev` constant.
+- `EmbeddedPlayerOverlay.tsx`: global mouseup handler for scrub drag, `isDev`, better error messages.
+- `sourceAffinity.ts` + `sourcePrefetch.ts`: replaced `import.meta.env.DEV` with `isDev`.
+
+---
+
+## Files Changed This Session
+
+| File | Change |
+|------|--------|
+| `electron/main.ts` | `Menu.setApplicationMenu(null)` |
+| `src/components/EmbeddedPlayerOverlay.tsx` | Fullscreen-on-close fix, source picker, UI polish, stats toggle |
+| `src/components/SourcesSection.tsx` | Removed auto-play, new Play + Sources UX |
+| `src/styles.css` | New source row CSS, new overlay control layout, source panel CSS |
 
 ---
 
 ## Build State
 
-- `npx tsc --noEmit` -> clean (no errors)
-- No new npm dependencies added
-- No database schema changes (uses existing series_episodes table)
-
----
-
-## Testing / Acceptance
-
-1. Install a series addon (e.g. Cinemeta)
-2. Open a series with a cached episode list (visit Media page — episodes must load for cache to populate)
-3. Start playing an episode via embedded player (flag ON)
-4. With <=3 minutes remaining, the "Next Episode ->" button should appear bottom-right
-5. Click it — overlay transitions to next episode, progress for current episode is saved
-6. N key should also trigger the transition
-7. Source should prefer the same provider/hostname as the current stream when possible
-8. If next episode is the last, the button should not appear
+- `npx tsc --noEmit` → clean
+- No new npm dependencies
+- No database schema changes
+- No IPC changes
 
 ---
 
 ## Guardrails (unchanged)
 
-- External MPV path completely untouched
-- No debrid, no torrent resolving, no hardcoded providers
-- All embedded code gated on experimentalEmbeddedPlayer flag
-- No SQLite schema changes; no stream URL persistence
-- Source prefetch cache is in-memory only (cleared on app restart)
+- External MPV path untouched
+- No debrid, torrent, hardcoded providers
+- All embedded code gated on `experimentalEmbeddedPlayer`
+- No SQLite schema changes
+- Source prefetch cache in-memory only

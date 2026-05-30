@@ -41,6 +41,9 @@ import type { PlayRequest } from "../core/player/types.js";
 import type { MpvTrack } from "../types/embedded-mpv.js";
 import type { SeriesNextEpisode } from "../types/preload.js";
 import type { StreamSourceResult, StremioStream } from "../core/stremio/types.js";
+import { addonSupportsResource } from "../core/stremio/meta.js";
+import { streamDedupKey } from "../core/stremio/streams.js";
+import { chooseBestSource, detectResolution } from "../core/player/sourceRanking.js";
 
 // Dev flag — safe in both Vite (renderer) and plain Node.
 const isDev =
@@ -115,6 +118,11 @@ export default function EmbeddedPlayerOverlay() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const fullscreenAvailable =
     typeof window !== "undefined" && !!window.embeddedMpv?.setFullscreen;
+  // Ref-mirror so the req-change effect below can read the current value
+  // without needing isFullscreen in its dep array (which would re-run on
+  // every fullscreen toggle instead of only when req goes null).
+  const isFullscreenRef = useRef(false);
+  isFullscreenRef.current = isFullscreen;
 
   // ---- Auto-hide controls (E6) --------------------------------------------
 
@@ -144,12 +152,41 @@ export default function EmbeddedPlayerOverlay() {
   /** Transitioning to next episode — prevents double-click. */
   const [transitioning, setTransitioning] = useState(false);
 
+  // ---- In-player source picker state (Part 5) ----------------------------
+
+  /** Whether the source panel drawer is open. */
+  const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
+  /** All fetched sources for the current playable. Null = not yet fetched. */
+  const [overlayResults, setOverlayResults] = useState<StreamSourceResult[] | null>(null);
+  /** True while sources are loading for the panel. */
+  const [overlayLoading, setOverlayLoading] = useState(false);
+  /** Error while fetching sources for the panel. */
+  const [overlayFetchError, setOverlayFetchError] = useState<string | null>(null);
+  /** Key of the source currently playing (for badge). */
+  const [currentSourceKey, setCurrentSourceKey] = useState<string | null>(null);
+
+  /** Whether the dev stats HUD is visible (hidden by default — Part 4). */
+  const [statsVisible, setStatsVisible] = useState(false);
+
   // ---- Store subscription --------------------------------------------------
 
   useEffect(() => {
     const unsub = subscribeEmbeddedPlayRequest((r) => setReq(r));
     return () => unsub();
   }, []);
+
+  // ---- Exit fullscreen when overlay closes --------------------------------
+  // When req goes null (user closes overlay, next-episode transition starts,
+  // or clearEmbeddedPlayRequest() is called for any reason) we must exit
+  // BrowserWindow fullscreen so the main app is not left stuck fullscreen.
+  // Using a ref for isFullscreen avoids re-running on every fullscreen toggle.
+  useEffect(() => {
+    if (req === null && isFullscreenRef.current) {
+      void window.embeddedMpv?.setFullscreen(false);
+      setIsFullscreen(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [req]);
 
   // ---- Playback lifecycle --------------------------------------------------
 
@@ -308,6 +345,14 @@ export default function EmbeddedPlayerOverlay() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [req, profileId]);
 
+  // ---- Reset source picker when the episode/movie changes ----------------
+  useEffect(() => {
+    setSourcePanelOpen(false);
+    setOverlayResults(null);
+    setOverlayFetchError(null);
+    setCurrentSourceKey(null);
+  }, [req?.playableId]);
+
   // ---- E8: Show/hide next episode prompt based on remaining time -----------
 
   useEffect(() => {
@@ -325,6 +370,66 @@ export default function EmbeddedPlayerOverlay() {
       console.log(`[next-ep] prompt shown — ${remaining.toFixed(0)}s remaining`);
     }
   }, [playbackState?.timePos, playbackState?.duration, nextEpisode, running]);
+
+  // ---- In-player source picker fetch ----------------------------------------
+
+  const openSourcePanel = useCallback(async () => {
+    setSourcePanelOpen(true);
+    if (overlayResults !== null || !req || profileId === null) return;
+    setOverlayLoading(true);
+    setOverlayFetchError(null);
+    try {
+      const addons = await window.mediaCenter.addons.list(profileId);
+      const eligible = addons.filter((a) =>
+        addonSupportsResource(a.manifest, "stream", req.type),
+      );
+      const collected: StreamSourceResult[] = [];
+      const seen = new Set<string>();
+      await Promise.allSettled(
+        eligible.map((a) =>
+          window.mediaCenter.streams
+            .fetch({ manifestUrl: a.manifestUrl, type: req.type, id: req.playableId })
+            .then((res) => {
+              ((res.streams ?? []) as StremioStream[]).forEach((s, i) => {
+                const key = streamDedupKey(s, `${a.id}#${i}`);
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  collected.push({
+                    stream: s,
+                    source: { addonId: a.id, addonName: a.manifest.name },
+                    key,
+                  });
+                }
+              });
+            })
+            .catch(() => {}),
+        ),
+      );
+      setOverlayResults(collected);
+    } catch (e) {
+      setOverlayFetchError(
+        e instanceof Error ? e.message : "Failed to load sources.",
+      );
+    } finally {
+      setOverlayLoading(false);
+    }
+  }, [req, profileId, overlayResults]);
+
+  const handleOverlaySourceSelect = useCallback(
+    (result: StreamSourceResult) => {
+      if (!req) return;
+      setSourcePanelOpen(false);
+      setCurrentSourceKey(result.key);
+      const newReq: PlayRequest = {
+        ...req,
+        streamUrl: result.stream.url ?? "",
+        streamTitle: result.stream.title,
+        streamName: result.stream.name,
+      };
+      setEmbeddedPlayRequest(newReq);
+    },
+    [req],
+  );
 
   // ---- E8: Transition to next episode -------------------------------------
 
@@ -592,19 +697,37 @@ export default function EmbeddedPlayerOverlay() {
     "emb-overlay",
     isFullscreen ? "is-fullscreen" : "",
     !controlsVisible ? "controls-hidden" : "",
+    sourcePanelOpen ? "source-panel-open" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
-  // Next episode prompt content.
+  // Next episode prompt label.
   const nextEpButtonLabel = (() => {
     if (!nextEpisode) return null;
     if (nextSourceLoading) return "Preparing…";
-    if (!nextSource) return null; // no playable source found
+    if (!nextSource) return null;
     const label = nextEpLabel(nextEpisode);
     const epTitle = nextEpisode.title;
     return epTitle ? `${label}: ${epTitle}` : label;
   })();
+
+  // Best source quality label for the source button.
+  const bestOverlaySource = overlayResults
+    ? chooseBestSource(overlayResults, settings)
+    : null;
+  const currentOverlaySourceKey = currentSourceKey ?? bestOverlaySource?.key ?? null;
+
+  // ── Helper: quality badge text ────────────────────────────────────────────
+  const qualityBadge = (result: StreamSourceResult | null): string | null => {
+    if (!result) return null;
+    const text = [result.stream.name, result.stream.title]
+      .filter(Boolean)
+      .join(" ");
+    const tier = detectResolution(text);
+    if (tier === "unknown" || tier === "cam") return null;
+    return tier;
+  };
 
   return (
     <div
@@ -615,35 +738,15 @@ export default function EmbeddedPlayerOverlay() {
       onMouseEnter={handleMouseActivity}
     >
       <div className="emb-overlay__stage">
-        {starting && (
-          <div className="emb-overlay__loading muted small">
-            Starting native session…
-          </div>
-        )}
-
         <canvas ref={canvasRef} className="emb-overlay__canvas" />
 
-        {/* ── Header ── */}
-        <div className="emb-overlay__header">
-          <div className="emb-overlay__title-area">
-            <span className="emb-overlay__title" title={title}>
-              {title}
-            </span>
-            <span className="exp-badge">EXPERIMENTAL</span>
+        {/* ── Loading indicator ── */}
+        {starting && (
+          <div className="emb-overlay__loading-indicator">
+            <div className="emb-overlay__spinner" />
+            <span>Starting…</span>
           </div>
-          <span className="emb-overlay__status muted small">{statusText}</span>
-          <button
-            type="button"
-            className="emb-overlay__close"
-            onClick={handleClose}
-            title="Close embedded player (Esc)"
-            aria-label="Close embedded player"
-            onMouseEnter={pinControls}
-            onMouseLeave={unpinControls}
-          >
-            ✕
-          </button>
-        </div>
+        )}
 
         {/* ── Error banners ── */}
         {(!available || error) && (
@@ -664,7 +767,51 @@ export default function EmbeddedPlayerOverlay() {
           </div>
         )}
 
-        {/* ── E8: Next Episode prompt (bottom-right, above controls) ── */}
+        {/* ── Header (top bar) ── */}
+        <div className="emb-overlay__header">
+          <div className="emb-overlay__title-area">
+            <span className="emb-overlay__title" title={title}>
+              {title}
+            </span>
+            <span className="exp-badge">BETA</span>
+          </div>
+
+          <div className="emb-overlay__header-actions">
+            {/* Stats toggle */}
+            <button
+              type="button"
+              className={`emb-overlay__ctrl emb-overlay__ctrl--icon emb-overlay__ctrl--ghost${statsVisible ? " is-active" : ""}`}
+              onClick={() => setStatsVisible((v) => !v)}
+              title="Toggle performance stats"
+              aria-label="Toggle performance stats"
+            >
+              ⓘ
+            </button>
+            {/* Close */}
+            <button
+              type="button"
+              className="emb-overlay__close"
+              onClick={handleClose}
+              title="Close embedded player (Esc)"
+              aria-label="Close embedded player"
+              onMouseEnter={pinControls}
+              onMouseLeave={unpinControls}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {/* ── Dev stats HUD (hidden by default, toggled via ⓘ button) ── */}
+        {statsVisible && (
+          <div className="emb-overlay__stats muted small">
+            <span>{stats.fps.toFixed(1)} fps</span>
+            <span>· {stats.avgGetMs.toFixed(1)} ms</span>
+            <span>· {stats.drawn}d/{stats.skipped}s</span>
+          </div>
+        )}
+
+        {/* ── Next Episode prompt (bottom-right, above controls) ── */}
         {showNextEpPrompt && nextEpButtonLabel && (
           <div
             className="emb-overlay__next-ep"
@@ -687,12 +834,94 @@ export default function EmbeddedPlayerOverlay() {
           </div>
         )}
 
-        {/* ── Dev stats HUD ── */}
-        <div className="emb-overlay__stats muted small">
-          <span>{stats.fps.toFixed(1)} fps</span>
-          <span>· {stats.avgGetMs.toFixed(1)} ms</span>
-          <span>· {stats.drawn}d/{stats.skipped}s</span>
-        </div>
+        {/* ── In-player Source Picker Panel ── */}
+        {sourcePanelOpen && (
+          <div
+            className="emb-overlay__source-panel"
+            onMouseEnter={pinControls}
+            onMouseLeave={unpinControls}
+          >
+            <div className="emb-overlay__source-panel-header">
+              <span className="emb-overlay__source-panel-title">Sources</span>
+              <button
+                type="button"
+                className="emb-overlay__ctrl emb-overlay__ctrl--icon"
+                onClick={() => setSourcePanelOpen(false)}
+                aria-label="Close source panel"
+              >
+                ✕
+              </button>
+            </div>
+
+            {overlayLoading && (
+              <div className="emb-overlay__source-panel-loading muted small">
+                Loading sources…
+              </div>
+            )}
+            {overlayFetchError && (
+              <div className="error-banner emb-overlay__banner" role="alert">
+                {overlayFetchError}
+              </div>
+            )}
+            {!overlayLoading && overlayResults !== null && (
+              overlayResults.length === 0 ? (
+                <div className="emb-overlay__source-panel-empty muted small">
+                  No sources found for this episode.
+                </div>
+              ) : (
+                <ul className="emb-overlay__source-list">
+                  {overlayResults.map((r) => {
+                    const isCurrent = r.key === currentOverlaySourceKey;
+                    const q = qualityBadge(r);
+                    const isPlaying = req?.streamUrl === (r.stream.url ?? "");
+                    return (
+                      <li
+                        key={r.key}
+                        className={`emb-overlay__source-item${isCurrent ? " is-current" : ""}${isPlaying ? " is-playing" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className="emb-overlay__source-item-btn"
+                          onClick={() => handleOverlaySourceSelect(r)}
+                          title={r.stream.url ?? ""}
+                        >
+                          <span className="emb-overlay__source-name">
+                            {r.stream.name ?? r.source.addonName}
+                          </span>
+                          <span className="emb-overlay__source-meta muted small">
+                            {r.stream.title && (
+                              <span className="emb-overlay__source-title">
+                                {r.stream.title}
+                              </span>
+                            )}
+                            {q && (
+                              <span className="emb-overlay__source-quality">
+                                {q}
+                              </span>
+                            )}
+                            <span className="emb-overlay__source-addon">
+                              {r.source.addonName}
+                            </span>
+                          </span>
+                        </button>
+                        {isPlaying && (
+                          <span className="emb-overlay__source-badge emb-overlay__source-badge--playing">
+                            Playing
+                          </span>
+                        )}
+                        {isCurrent && !isPlaying && (
+                          <span className="emb-overlay__source-badge emb-overlay__source-badge--best">
+                            Best
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )
+            )}
+          </div>
+        )}
 
         {/* ── Controls bar ── */}
         {(running || starting) && (
@@ -703,131 +932,148 @@ export default function EmbeddedPlayerOverlay() {
             onFocus={pinControls}
             onBlur={unpinControls}
           >
-            <button
-              type="button"
-              className="emb-overlay__ctrl emb-overlay__ctrl--icon"
-              onClick={togglePause}
-              title={paused ? "Play (Space)" : "Pause (Space)"}
-              aria-label={paused ? "Play" : "Pause"}
-              disabled={starting}
-            >
-              {paused ? "▶" : "⏸"}
-            </button>
-
-            <span className="emb-overlay__time">
-              {formatTime(dragging ? dragValue : timePos)}
-            </span>
-
-            <input
-              type="range"
-              className="emb-overlay__progress"
-              min={0}
-              max={progressMax}
-              step={0.5}
-              value={progressValue}
-              onMouseDown={handleProgressMouseDown}
-              onChange={handleProgressChange}
-              onMouseUp={handleProgressMouseUp}
-              aria-label="Seek"
-              title="Seek (Left/Right arrows)"
-            />
-
-            <span className="emb-overlay__time emb-overlay__time--dur">
-              {formatTime(duration)}
-            </span>
-
-            <button
-              type="button"
-              className="emb-overlay__ctrl emb-overlay__ctrl--icon"
-              onClick={() => {
-                if (volume > 0) {
-                  prevVolumeRef.current = volume;
-                  setVolume(0);
-                } else {
-                  setVolume(prevVolumeRef.current || 100);
-                }
-              }}
-              title="Mute/unmute (M)"
-              aria-label={volume === 0 ? "Unmute" : "Mute"}
-            >
-              {volume === 0 ? "🔇" : volume < 50 ? "🔉" : "🔊"}
-            </button>
-            <input
-              type="range"
-              className="emb-overlay__volume"
-              min={0}
-              max={130}
-              step={1}
-              value={volume}
-              onChange={handleVolumeChange}
-              aria-label="Volume"
-              title="Volume"
-            />
-
-            {subtitleTracks.length > 0 ? (
-              <select
-                className="emb-overlay__track-select"
-                value={selectedSid}
-                onChange={handleSubtitleChange}
-                title="Subtitle track"
-                aria-label="Subtitle track"
-              >
-                <option value={-1}>CC: Off</option>
-                {subtitleTracks.map((t, i) => (
-                  <option key={t.id} value={t.id}>
-                    CC: {trackLabel(t, i)}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span
-                className="emb-overlay__ctrl emb-overlay__ctrl--disabled muted small"
-                title="No subtitle tracks loaded"
-              >
-                CC: —
+            {/* Row 1: progress bar */}
+            <div className="emb-overlay__progress-row">
+              <span className="emb-overlay__time">
+                {formatTime(dragging ? dragValue : timePos)}
               </span>
-            )}
-
-            {audioTracks.length > 1 ? (
-              <select
-                className="emb-overlay__track-select"
-                value={selectedAid}
-                onChange={handleAudioChange}
-                title="Audio track"
-                aria-label="Audio track"
-              >
-                {audioTracks.map((t, i) => (
-                  <option key={t.id} value={t.id}>
-                    🎵 {trackLabel(t, i)}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="emb-overlay__ctrl emb-overlay__ctrl--disabled muted small">
-                🎵 —
+              <input
+                type="range"
+                className="emb-overlay__progress"
+                min={0}
+                max={progressMax}
+                step={0.5}
+                value={progressValue}
+                onMouseDown={handleProgressMouseDown}
+                onChange={handleProgressChange}
+                onMouseUp={handleProgressMouseUp}
+                aria-label="Seek"
+                title="Seek (← →)"
+              />
+              <span className="emb-overlay__time">
+                {formatTime(duration)}
               </span>
-            )}
+            </div>
 
-            {fullscreenAvailable && (
+            {/* Row 2: transport buttons */}
+            <div className="emb-overlay__transport">
+              {/* Play/pause */}
+              <button
+                type="button"
+                className="emb-overlay__ctrl emb-overlay__ctrl--play"
+                onClick={togglePause}
+                title={paused ? "Play (Space)" : "Pause (Space)"}
+                aria-label={paused ? "Play" : "Pause"}
+                disabled={starting}
+              >
+                {paused ? "▶" : "⏸"}
+              </button>
+
+              {/* Volume */}
               <button
                 type="button"
                 className="emb-overlay__ctrl emb-overlay__ctrl--icon"
-                onClick={toggleFullscreen}
-                title={isFullscreen ? "Exit fullscreen (Esc)" : "Fullscreen (F)"}
-                aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                onClick={() => {
+                  if (volume > 0) { prevVolumeRef.current = volume; setVolume(0); }
+                  else setVolume(prevVolumeRef.current || 100);
+                }}
+                title="Mute/unmute (M)"
+                aria-label={volume === 0 ? "Unmute" : "Mute"}
               >
-                {isFullscreen ? "⤡" : "⤢"}
+                {volume === 0 ? "🔇" : volume < 50 ? "🔉" : "🔊"}
               </button>
-            )}
+              <input
+                type="range"
+                className="emb-overlay__volume"
+                min={0}
+                max={130}
+                step={1}
+                value={volume}
+                onChange={handleVolumeChange}
+                aria-label="Volume"
+                title="Volume"
+              />
 
-            <button
-              type="button"
-              className="emb-overlay__ctrl emb-overlay__ctrl--stop"
-              onClick={handleClose}
-              title="Stop and close (Esc)"
-            >
-              ⏹ Stop
-            </button>
+              {/* Spacer */}
+              <span className="emb-overlay__transport-spacer" />
+
+              {/* Subtitle track */}
+              {subtitleTracks.length > 0 ? (
+                <select
+                  className="emb-overlay__track-select"
+                  value={selectedSid}
+                  onChange={handleSubtitleChange}
+                  title="Subtitles"
+                  aria-label="Subtitle track"
+                >
+                  <option value={-1}>CC: Off</option>
+                  {subtitleTracks.map((t, i) => (
+                    <option key={t.id} value={t.id}>
+                      CC: {trackLabel(t, i)}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
+              {/* Audio track */}
+              {audioTracks.length > 1 ? (
+                <select
+                  className="emb-overlay__track-select"
+                  value={selectedAid}
+                  onChange={handleAudioChange}
+                  title="Audio"
+                  aria-label="Audio track"
+                >
+                  {audioTracks.map((t, i) => (
+                    <option key={t.id} value={t.id}>
+                      🎵 {trackLabel(t, i)}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
+              {/* Source picker toggle */}
+              <button
+                type="button"
+                className={`emb-overlay__ctrl emb-overlay__ctrl--icon${sourcePanelOpen ? " is-active" : ""}`}
+                onClick={() => {
+                  if (sourcePanelOpen) {
+                    setSourcePanelOpen(false);
+                  } else {
+                    void openSourcePanel();
+                  }
+                }}
+                title="Change source"
+                aria-label="Source picker"
+                onMouseEnter={pinControls}
+                onMouseLeave={unpinControls}
+              >
+                ⚙
+              </button>
+
+              {/* Fullscreen */}
+              {fullscreenAvailable && (
+                <button
+                  type="button"
+                  className="emb-overlay__ctrl emb-overlay__ctrl--icon"
+                  onClick={toggleFullscreen}
+                  title={isFullscreen ? "Exit fullscreen (Esc)" : "Fullscreen (F)"}
+                  aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                >
+                  {isFullscreen ? "⤡" : "⤢"}
+                </button>
+              )}
+
+              {/* Stop */}
+              <button
+                type="button"
+                className="emb-overlay__ctrl emb-overlay__ctrl--stop"
+                onClick={handleClose}
+                title="Stop and close (Esc)"
+              >
+                ⏹
+              </button>
+            </div>
           </div>
         )}
       </div>

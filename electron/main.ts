@@ -1,7 +1,7 @@
 // Electron main process: window lifecycle + IPC handlers wiring the core
 // Stremio module and the SQLite layer.
 
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, shell, Menu } from "electron";
 import path from "node:path";
 import {
   initDb,
@@ -419,6 +419,11 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(() => {
+  // Remove the default Electron application menu (File/Edit/View/Window/Help).
+  // Custom app navigation lives in the React sidebar — the native menu bar
+  // is redundant and looks jarring in a media center UI.
+  Menu.setApplicationMenu(null);
+
   initDb();
   registerIpcHandlers();
   createWindow();
