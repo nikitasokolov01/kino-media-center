@@ -198,6 +198,36 @@ export interface AppSettings {
    * No effect on the default external-MPV player.
    */
   experimentalEmbeddedPlayer: boolean;
+  /**
+   * UI theme. One of the built-in theme IDs ("default-dark", "oled-black",
+   * "purple", "blue", "red", "neon-midnight") or "" for the default.
+   */
+  themeId: string;
+  /**
+   * Accent color override as a hex string e.g. "#ff6b6b".
+   * Empty string means use the theme built-in accent colour.
+   */
+  accentColor: string;
+  /**
+   * User-supplied custom CSS injected after all built-in styles. Local only,
+   * no remote imports allowed. Applied via style#custom-user-css.
+   */
+  customCss: string;
+  /**
+   * Poster/card corner radius preset.
+   * Values: "square" | "soft" | "rounded" | "pill". Default "soft".
+   */
+  posterRadius: string;
+  /**
+   * Background style override.
+   * Values: "" | "oled-black" | "subtle-gradient" | "neon-gradient" | "custom-solid".
+   * Default "" uses the theme default.
+   */
+  backgroundStyle: string;
+  /** Custom background solid color hex. Used when backgroundStyle is "custom-solid". */
+  customBackgroundColor: string;
+  /** Custom background gradient CSS. Reserved for future use. */
+  customBackgroundGradient: string;
 }
 
 /** Per-stream-format capability hints used by the action picker. */

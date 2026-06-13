@@ -1,7 +1,7 @@
 // Global app settings (default player, MPV path). Loaded once at app boot,
 // exposed via context, refreshed automatically after writes.
 //
-// Renderer components should NEVER write to the underlying SQLite directly —
+// Renderer components should NEVER write to the underlying SQLite directly --
 // always go through `update` so the in-memory value stays consistent.
 
 import {
@@ -23,8 +23,8 @@ interface SettingsContextValue {
   refresh: () => Promise<void>;
 }
 
-// While settings are still loading the rest of the UI shouldn't crash —
-// stand-in defaults match db.ts's `DEFAULTS`.
+// While settings are still loading the rest of the UI should not crash --
+// stand-in defaults match db.ts DEFAULTS.
 const FALLBACK: AppSettings = {
   defaultPlayer: "mpv",
   mpvPath: "mpv",
@@ -37,6 +37,13 @@ const FALLBACK: AppSettings = {
   preferredSourceQuality: "best",
   hideCamSources: true,
   experimentalEmbeddedPlayer: false,
+  themeId: "",
+  accentColor: "",
+  customCss: "",
+  posterRadius: "soft",
+  backgroundStyle: "",
+  customBackgroundColor: "",
+  customBackgroundGradient: "",
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);

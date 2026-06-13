@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useProfile } from "../state/ProfileContext.js";
 import CatalogRow from "../components/CatalogRow.js";
 import ContinueWatchingRow from "../components/ContinueWatchingRow.js";
+import HomeHero from "../components/HomeHero.js";
 import type { AddonRow } from "../types/preload.js";
 import { catalogRequiresExtras } from "../core/stremio/catalog.js";
 import type { StremioCatalog } from "../core/stremio/types.js";
@@ -24,7 +25,6 @@ function descriptorsFromAddons(addons: AddonRow[]): CatalogDescriptor[] {
     if (!Array.isArray(catalogs)) continue;
     for (const c of catalogs) {
       if (!c || typeof c.type !== "string" || typeof c.id !== "string") continue;
-      // Skip catalogs that require parameters we don't supply (search, etc.)
       if (catalogRequiresExtras(c)) continue;
       out.push({
         key: `${a.id}:${c.type}:${c.id}`,
@@ -33,7 +33,7 @@ function descriptorsFromAddons(addons: AddonRow[]): CatalogDescriptor[] {
         manifestUrl: a.manifestUrl,
         type: c.type,
         catalogId: c.id,
-        catalogName: c.name ?? `${c.type} · ${c.id}`,
+        catalogName: c.name ?? `${c.type} - ${c.id}`,
       });
     }
   }
@@ -45,6 +45,16 @@ export default function HomePage() {
   const [addons, setAddons] = useState<AddonRow[]>([]);
   const [addonsLoading, setAddonsLoading] = useState(true);
   const [addonsError, setAddonsError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const navigate = useNavigate();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  function handleSearch(e: FormEvent) {
+    e.preventDefault();
+    const q = searchQuery.trim();
+    if (!q) return;
+    void navigate(`/search?q=${encodeURIComponent(q)}`);
+  }
 
   useEffect(() => {
     if (!profile) return;
@@ -69,33 +79,94 @@ export default function HomePage() {
 
   const descriptors = useMemo(() => descriptorsFromAddons(addons), [addons]);
 
+  // Explicit boolean to avoid a truthy Profile object leaking into JSX children.
+  const showHero: boolean =
+    profile != null && !addonsLoading && descriptors.length > 0;
+
   return (
     <div className="page">
-      <h1>Home</h1>
+      {showHero ? null : <h1>Home</h1>}
 
-      {profile && <ContinueWatchingRow />}
+      {showHero ? <HomeHero descriptors={descriptors} /> : null}
 
-      {profileLoading && <p className="muted">Loading profile…</p>}
+      {/* Inline search bar */}
+      {profile != null ? (
+        <form className="home-search" onSubmit={handleSearch} role="search">
+          <div className="home-search__inner">
+            <svg
+              className="home-search__icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              ref={searchInputRef}
+              className="home-search__input"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search movies, shows, anime..."
+              autoComplete="off"
+              spellCheck={false}
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                className="home-search__clear"
+                onClick={() => {
+                  setSearchQuery("");
+                  searchInputRef.current?.focus();
+                }}
+                aria-label="Clear search"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
+
+      {profile != null ? <ContinueWatchingRow /> : null}
+
+      {profileLoading && <p className="muted">Loading profile...</p>}
       {profileError && (
         <div className="error-banner">Could not load profile: {profileError}</div>
       )}
 
-      {profile && addonsLoading && <p className="muted">Loading addons…</p>}
+      {profile && addonsLoading && <p className="muted">Loading addons...</p>}
       {profile && addonsError && (
         <div className="error-banner">Could not load addons: {addonsError}</div>
       )}
 
       {profile && !addonsLoading && addons.length === 0 && (
         <div className="empty">
-          You haven't installed any addons yet.{" "}
+          You have not installed any addons yet.{" "}
           <Link to="/addons">Go to Addons</Link> to add one.
         </div>
       )}
 
       {profile && !addonsLoading && addons.length > 0 && descriptors.length === 0 && (
         <div className="empty">
-          None of your installed addons expose a browsable catalog (catalogs
-          that require search or other parameters are skipped).
+          None of your installed addons expose a browsable catalog.
         </div>
       )}
 

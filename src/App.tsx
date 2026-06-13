@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { Link, NavLink, Navigate, Route, Routes } from "react-router-dom";
 import AddonsPage from "./pages/AddonsPage.js";
 import HomePage from "./pages/HomePage.js";
 import MediaPage from "./pages/MediaPage.js";
@@ -10,7 +10,6 @@ import LibraryPage from "./pages/LibraryPage.js";
 import ProfilePicker from "./pages/ProfilePicker.js";
 import ExperimentalEmbeddedPlayerPage from "./pages/ExperimentalEmbeddedPlayerPage.js";
 import EmbeddedPlayerOverlay from "./components/EmbeddedPlayerOverlay.js";
-import SearchBox from "./components/SearchBox.js";
 import ProfileAvatar from "./components/ProfileAvatar.js";
 import NowPlayingBar from "./components/NowPlayingBar.js";
 import { ProfileProvider, useProfile } from "./state/ProfileContext.js";
@@ -18,18 +17,21 @@ import { SettingsProvider, useSettings } from "./state/SettingsContext.js";
 import { LibraryProvider } from "./state/LibraryContext.js";
 import { ToastProvider } from "./state/ToastContext.js";
 import { ContextMenuProvider } from "./state/ContextMenuContext.js";
+import ThemeProvider from "./theme/ThemeProvider.js";
 
 export default function App() {
   return (
     <ProfileProvider>
       <SettingsProvider>
-        <LibraryProvider>
-          <ToastProvider>
-            <ContextMenuProvider>
-              <AppInner />
-            </ContextMenuProvider>
-          </ToastProvider>
-        </LibraryProvider>
+        <ThemeProvider>
+          <LibraryProvider>
+            <ToastProvider>
+              <ContextMenuProvider>
+                <AppInner />
+              </ContextMenuProvider>
+            </ToastProvider>
+          </LibraryProvider>
+        </ThemeProvider>
       </SettingsProvider>
     </ProfileProvider>
   );
@@ -50,44 +52,37 @@ function AppInner() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">Media Center</div>
-        <SearchBox />
         <nav>
           <NavLink to="/" end className="nav-item">
             Home
           </NavLink>
-          <NavLink to="/search" className="nav-item">
-            Search
-          </NavLink>
           <NavLink to="/library" className="nav-item">
             Library
           </NavLink>
-          <NavLink to="/addons" className="nav-item">
-            Addons
-          </NavLink>
-          <NavLink to="/settings" className="nav-item">
-            Settings
-          </NavLink>
-          {embeddedEnabled && (
-            <NavLink to="/experimental-embedded-player" className="nav-item">
-              Embedded (exp)
-            </NavLink>
-          )}
         </nav>
 
         <div className="sidebar__spacer" />
 
-        <button
-          type="button"
-          className="profile-switcher"
-          onClick={clearActiveProfile}
-          title="Switch profile"
-        >
-          <ProfileAvatar profile={profile} size={32} />
-          <span className="profile-switcher__meta">
-            <span className="profile-switcher__name">{profile.name}</span>
-            <span className="profile-switcher__action">Switch profile</span>
-          </span>
-        </button>
+        <div className="sidebar__bottom">
+          <Link to="/settings" className="sidebar__gear-btn" title="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </Link>
+          <button
+            type="button"
+            className="profile-switcher"
+            onClick={clearActiveProfile}
+            title="Switch profile"
+          >
+            <ProfileAvatar profile={profile} size={32} />
+            <span className="profile-switcher__meta">
+              <span className="profile-switcher__name">{profile.name}</span>
+              <span className="profile-switcher__action">Switch profile</span>
+            </span>
+          </button>
+        </div>
       </aside>
       <main className="content">
         <Routes>

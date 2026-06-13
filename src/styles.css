@@ -1,17 +1,171 @@
+/* ─── Theme token system ──────────────────────────────────────────────────────
+ *
+ * Semantic tokens are defined here on :root (default-dark theme).
+ * Themes override them on html[data-theme="<id>"].
+ * The accent-color setting overrides --color-accent (and friends) via
+ * an inline style on <html> injected by ThemeProvider.
+ * Custom CSS is injected after this block via <style id="custom-user-css">.
+ *
+ * Legacy aliases keep all existing selectors working without any rewrites.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
 :root {
-  --bg: #0f1115;
-  --panel: #161a22;
-  --panel-2: #1d2230;
-  --border: #262c3a;
-  --text: #e6e8ee;
-  --muted: #8a93a6;
-  --accent: #6aa3ff;
-  --accent-2: #9b7dff;
-  --danger: #ff6b6b;
-  --tag: #2a3146;
+  /* ── Semantic color tokens ── */
+  --color-bg:           #0f1115;   /* page background                    */
+  --color-bg-elevated:  #161a22;   /* sidebar, cards, panels             */
+  --color-surface:      #1d2230;   /* inputs, secondary panels           */
+  --color-surface-hover:#22283e;   /* surface + hover tint               */
+  --color-border:       #262c3a;   /* dividers, card borders             */
+  --color-text:         #e6e8ee;   /* primary text                       */
+  --color-text-muted:   #8a93a6;   /* secondary / placeholder text       */
+  --color-accent:       #6aa3ff;   /* primary action, links, highlights  */
+  --color-accent-hover: #85b8ff;   /* accent on hover                    */
+  --color-accent-2:     #9b7dff;   /* secondary accent (purple)          */
+  --color-danger:       #ff6b6b;   /* destructive actions, errors        */
+  --color-success:      #6affb3;   /* success states                     */
+  --color-warning:      #ffc46b;   /* warnings                           */
+  /* ── Accent-button foreground ── */
+  --color-accent-fg:    #0b1020;   /* text on accent-coloured elements   */
+
+  /* ── Radius tokens ── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* ── Shadow tokens ── */
+  --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+  /* ── Font token ── */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  /* ── Scrollbar tokens ── */
+  --scrollbar-size:        6px;
+  --scrollbar-track:       transparent;
+  --scrollbar-thumb:       rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--color-accent) 45%, rgba(255, 255, 255, 0.18));
+
+  /* ── Legacy aliases — existing selectors continue to work unchanged ── */
+  --bg:      var(--color-bg);
+  --panel:   var(--color-bg-elevated);
+  --panel-2: var(--color-surface);
+  --border:  var(--color-border);
+  --text:    var(--color-text);
+  --muted:   var(--color-text-muted);
+  --accent:  var(--color-accent);
+  --accent-2:var(--color-accent-2);
+  --danger:  var(--color-danger);
+  --tag:     #2a3146;
   --tag-alt: #2b3a3a;
-  --radius: 10px;
-  --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --radius:  var(--radius-md);
+  --shadow:  var(--shadow-soft);
+}
+
+/* ── Built-in themes ─────────────────────────────────────────────────────── */
+
+html[data-theme="oled-black"] {
+  --color-bg:           #000000;
+  --color-bg-elevated:  #080a0f;
+  --color-surface:      #0e1018;
+  --color-surface-hover:#141820;
+  --color-border:       #1a1f2b;
+  --color-text:         #f0f2f8;
+  --color-text-muted:   #7a8499;
+  --tag: #17192a;
+  --tag-alt: #17252a;
+}
+
+html[data-theme="purple"] {
+  --color-bg:           #0d0b14;
+  --color-bg-elevated:  #18152a;
+  --color-surface:      #221e36;
+  --color-surface-hover:#2c2742;
+  --color-border:       #342e50;
+  --color-text:         #ede8ff;
+  --color-text-muted:   #9289b8;
+  --color-accent:       #a87fff;
+  --color-accent-hover: #be9fff;
+  --color-accent-fg:    #0d0b14;
+  --color-accent-2:     #6aa3ff;
+  --tag: #221e36;
+  --tag-alt: #1e2230;
+}
+
+html[data-theme="blue"] {
+  --color-bg:           #090d14;
+  --color-bg-elevated:  #0f1622;
+  --color-surface:      #162030;
+  --color-surface-hover:#1e2c40;
+  --color-border:       #1e3048;
+  --color-text:         #e4eeff;
+  --color-text-muted:   #7a96b8;
+  --color-accent:       #4d9fff;
+  --color-accent-hover: #6fb3ff;
+  --color-accent-fg:    #091422;
+  --color-accent-2:     #9b7dff;
+  --tag: #162030;
+  --tag-alt: #162820;
+}
+
+html[data-theme="red"] {
+  --color-bg:           #130b0b;
+  --color-bg-elevated:  #1f1212;
+  --color-surface:      #2a1818;
+  --color-surface-hover:#342020;
+  --color-border:       #3d2020;
+  --color-text:         #ffe8e8;
+  --color-text-muted:   #b88888;
+  --color-accent:       #ff6b6b;
+  --color-accent-hover: #ff8888;
+  --color-accent-fg:    #1a0000;
+  --color-accent-2:     #ffaa6b;
+  --tag: #2a1818;
+  --tag-alt: #1a2a18;
+}
+
+html[data-theme="neon-midnight"] {
+  --color-bg:              #050713;
+  --color-bg-elevated:     #090d1f;
+  --color-surface:         rgba(18, 24, 48, 0.88);
+  --color-surface-hover:   rgba(31, 42, 82, 0.95);
+  --color-border:          rgba(125, 211, 252, 0.22);
+  --color-text:            #f8fbff;
+  --color-text-muted:      #9fb3c8;
+  --color-accent:          #38bdf8;
+  --color-accent-hover:    #7dd3fc;
+  --color-accent-fg:       #050713;
+  --color-accent-2:        #818cf8;
+  --color-danger:          #f87171;
+  --color-success:         #34d399;
+  --color-warning:         #fbbf24;
+  --scrollbar-thumb:       rgba(56, 189, 248, 0.42);
+  --scrollbar-thumb-hover: rgba(125, 211, 252, 0.75);
+}
+
+/* ── Custom scrollbars ───────────────────────────────────────────────────── */
+/* Chromium / Electron — webkit pseudo-elements */
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 * {
@@ -26,8 +180,7 @@ html, body, #root {
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -461,7 +614,7 @@ a:hover { text-decoration: underline; }
 .install-form button {
   padding: 10px 16px;
   background: var(--accent);
-  color: #0b1020;
+  color: var(--color-accent-fg);
   border: 0;
   border-radius: 8px;
   font-weight: 600;
@@ -597,6 +750,187 @@ a:hover { text-decoration: underline; }
 }
 .link-button:hover {
   background: rgba(255, 107, 107, 0.1);
+}
+
+/* ---------- Home hero banner ------------------------------------------- */
+
+.home-hero {
+  position: relative;
+  width: 100%;
+  height: clamp(280px, 38vw, 520px);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  margin-bottom: 20px;
+  /* Filled by background image; this shows while image loads */
+  background: var(--color-bg-elevated);
+}
+
+/* Skeleton pulse while catalog items are being fetched */
+.home-hero--skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-elevated) 0%,
+    var(--color-surface) 50%,
+    var(--color-bg-elevated) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* Background image layer — transitions opacity for the fade effect */
+.home-hero__bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 20%; /* bias toward the upper portion of the image */
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.home-hero__bg.home-hero--visible {
+  opacity: 1;
+}
+
+/* Dark vignette gradient for text readability */
+.home-hero__gradient {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.92) 0%,
+    rgba(0, 0, 0, 0.45) 35%,
+    rgba(0, 0, 0, 0.10) 65%,
+    transparent 100%
+  );
+}
+
+/* Content block anchored to the bottom-left */
+.home-hero__content {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  padding: clamp(16px, 3vw, 32px);
+  max-width: min(65%, 640px);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.home-hero__content.home-hero--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.home-hero__genres {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.home-hero__title {
+  margin: 0 0 6px;
+  font-size: clamp(18px, 2.8vw, 34px);
+  font-weight: 700;
+  line-height: 1.1;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+
+.home-hero__meta {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.home-hero__desc {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.82);
+  /* Clamp to 2 lines to keep the hero compact */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.home-hero__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 0.15s, border-color 0.15s;
+}
+.home-hero__btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.55);
+}
+
+/* Left / right arrows — hidden until hero is hovered */
+.home-hero__arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 26px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.15s;
+  backdrop-filter: blur(4px);
+  z-index: 2;
+}
+.home-hero:hover .home-hero__arrow {
+  opacity: 1;
+}
+.home-hero__arrow:hover {
+  background: rgba(0, 0, 0, 0.78);
+}
+.home-hero__arrow--left  { left: 14px; }
+.home-hero__arrow--right { right: 14px; }
+
+/* Dot indicators */
+.home-hero__dots {
+  position: absolute;
+  bottom: 14px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 2;
+}
+
+.home-hero__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.2s, width 0.2s;
+  flex-shrink: 0;
+}
+.home-hero__dot--active {
+  width: 20px;
+  background: var(--color-accent);
 }
 
 /* ---------- Catalog rows (Home page) ---------- */
@@ -879,7 +1213,7 @@ a:hover { text-decoration: underline; }
 .primary-button {
   padding: 10px 18px;
   background: var(--accent);
-  color: #0b1020;
+  color: var(--color-accent-fg);
   border: 0;
   border-radius: 8px;
   font-weight: 600;
@@ -1240,7 +1574,7 @@ a:hover { text-decoration: underline; }
 }
 .season-tab--active {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--color-accent-fg);
   border-color: var(--accent);
 }
 .season-tab--active:hover { color: #0b1020; }
@@ -1358,7 +1692,7 @@ a:hover { text-decoration: underline; }
   font-size: 10px;
   font-weight: 600;
   background: var(--accent);
-  color: #0b1020;
+  color: var(--color-accent-fg);
   padding: 2px 6px;
   border-radius: 4px;
   text-transform: uppercase;
@@ -1369,7 +1703,7 @@ a:hover { text-decoration: underline; }
   font-size: 10px;
   font-weight: 600;
   background: var(--accent-2);
-  color: #0b1020;
+  color: var(--color-accent-fg);
   padding: 2px 6px;
   border-radius: 4px;
   text-transform: uppercase;
@@ -1852,7 +2186,7 @@ a:hover { text-decoration: underline; }
 }
 .stream-card__action--primary {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--color-accent-fg);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -2186,7 +2520,7 @@ a:hover { text-decoration: underline; }
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: #0b1020;
+  color: var(--color-accent-fg);
   background: var(--accent);
   border-radius: 6px;
   padding: 2px 6px;
@@ -2236,7 +2570,7 @@ a:hover { text-decoration: underline; }
 }
 .now-playing__btn--primary {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--color-accent-fg);
   border-color: var(--accent);
   font-weight: 700;
   min-width: 38px;
@@ -2341,7 +2675,7 @@ a:hover { text-decoration: underline; }
 }
 .chip--active {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--color-accent-fg);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -3054,3 +3388,626 @@ a:hover { text-decoration: underline; }
   padding: 2px 7px;
   margin-right: 8px;
 }
+
+/* ── Settings hub layout ─────────────────────────────────────────────────── */
+
+/* Page wrapper: just removes the usual page padding so the hub uses full height */
+.settings-hub-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+}
+
+/* 2-column grid: fixed-width nav | flexible panel */
+.settings-hub {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--color-border, var(--border));
+}
+
+/* ── Left nav ── */
+.settings-hub__nav {
+  border-right: 1px solid var(--color-border, var(--border));
+  padding: 12px 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  margin: 0 8px;
+  width: calc(100% - 16px);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted, var(--muted));
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.settings-nav-item:hover {
+  background: var(--color-surface-hover, var(--panel-2));
+  color: var(--color-text, var(--text));
+}
+.settings-nav-item--active {
+  background: var(--color-surface, var(--panel));
+  color: var(--color-accent, var(--accent));
+  font-weight: 600;
+}
+.settings-nav-item--sub {
+  padding-left: 24px;
+  font-size: 12px;
+  font-weight: 400;
+}
+.settings-nav-item--sub.settings-nav-item--active {
+  font-weight: 600;
+}
+
+/* ── Right content panel ── */
+.settings-hub__panel {
+  overflow-y: auto;
+  padding: 28px 36px;
+}
+
+/* ── Section panel (content inside each tab) ── */
+.settings-panel__title {
+  margin: 0 0 20px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text, var(--text));
+}
+
+/* Reuse existing settings-section for groups; add a label style */
+.settings-section__label {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted, var(--muted));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Profile list in Profile settings ── */
+.profile-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.profile-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 10px;
+}
+.profile-settings-row--active {
+  border-color: var(--color-accent, var(--accent));
+}
+.profile-settings-row__info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.profile-settings-row__name {
+  font-weight: 500;
+  font-size: 14px;
+}
+.profile-settings-row__badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--color-accent, var(--accent));
+  color: var(--color-accent-fg, #0b1020);
+}
+
+/* ── About table ── */
+.about-table {
+  border-collapse: collapse;
+  margin-top: 12px;
+  width: 100%;
+}
+.about-table tr + tr td {
+  border-top: 1px solid var(--color-border, var(--border));
+}
+.about-table td {
+  padding: 8px 0;
+  vertical-align: top;
+}
+.about-table__key {
+  width: 160px;
+  padding-right: 16px;
+}
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+
+/* ===================================================================
+   Navigation cleanup additions
+   =================================================================== */
+
+/* Bottom sidebar area containing gear + profile switcher */
+.sidebar__bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+/* Gear icon button linking to /settings */
+.sidebar__gear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto;
+  border-radius: var(--radius-md, 8px);
+  color: var(--color-text-muted, var(--muted));
+  text-decoration: none;
+  transition: color 0.15s, background 0.15s;
+}
+.sidebar__gear-btn:hover {
+  color: var(--color-text, var(--text));
+  background: var(--color-surface-hover, rgba(255,255,255,0.06));
+}
+.sidebar__gear-btn.active {
+  color: var(--color-accent, var(--accent));
+  background: var(--color-surface, var(--panel));
+}
+
+/* ===================================================================
+   Home page search bar
+   =================================================================== */
+
+.home-search {
+  width: 100%;
+  max-width: 560px;
+  margin: 16px 0 8px;
+}
+
+.home-search__inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.home-search__icon {
+  position: absolute;
+  left: 14px;
+  color: var(--color-text-muted, var(--muted));
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.home-search__input {
+  width: 100%;
+  padding: 11px 40px 11px 44px;
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: var(--radius-lg, 12px);
+  color: var(--color-text, var(--text));
+  font-size: 15px;
+  font-family: var(--font-ui, inherit);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+.home-search__input::placeholder {
+  color: var(--color-text-muted, var(--muted));
+}
+.home-search__input:focus {
+  border-color: var(--color-accent, var(--accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent, var(--accent)) 20%, transparent);
+}
+
+.home-search__clear {
+  position: absolute;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted, var(--muted));
+  transition: color 0.15s, background 0.15s;
+  padding: 0;
+}
+.home-search__clear:hover {
+  color: var(--color-text, var(--text));
+  background: var(--color-surface-hover, rgba(255,255,255,0.08));
+}
+
+/* ===================================================================
+   Global themed form controls (Part 3)
+   =================================================================== */
+
+/* All plain buttons, inputs, selects, and textareas inherit theme styling
+   unless they have a more specific class. */
+input:not([type="range"]):not([type="color"]):not([type="checkbox"]):not([type="radio"]):not(.home-search__input):not(.addon-url-input),
+select,
+textarea {
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text, var(--text));
+  font-family: var(--font-ui, inherit);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input:not([type="range"]):not([type="color"]):not([type="checkbox"]):not([type="radio"]):not(.home-search__input):not(.addon-url-input):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--color-accent, var(--accent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent, var(--accent)) 22%, transparent);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-muted, var(--muted));
+}
+
+/* ===================================================================
+   Appearance settings - Theme cards
+   =================================================================== */
+
+.appearance-themes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  background: none;
+  border: 2px solid var(--color-border, var(--border));
+  border-radius: var(--radius-md, 8px);
+  padding: 0;
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 110px;
+}
+.theme-card:hover {
+  border-color: var(--color-text-muted, var(--muted));
+}
+.theme-card--active {
+  border-color: var(--color-accent, var(--accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent, var(--accent)) 25%, transparent);
+}
+
+.theme-card__preview {
+  width: 100%;
+  height: 66px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 0;
+}
+
+.theme-card__preview-bg {
+  position: absolute;
+  inset: 0;
+}
+
+.theme-card__preview-sidebar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 28%;
+}
+
+.theme-card__preview-main {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  left: 28%;
+  padding: 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.theme-card__preview-text {
+  height: 4px;
+  border-radius: 2px;
+  opacity: 0.65;
+}
+
+.theme-card__preview-accent {
+  width: 28px;
+  height: 6px;
+  border-radius: 3px;
+  margin-bottom: 2px;
+}
+
+.theme-card__check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-accent, var(--accent));
+  color: var(--color-accent-fg, #0b1020);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.theme-card__label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text, var(--text));
+  text-align: center;
+  padding: 4px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ===================================================================
+   Appearance settings - Accent color circular swatches
+   =================================================================== */
+
+.accent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.accent-swatch-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+  padding: 0;
+  flex-shrink: 0;
+}
+.accent-swatch-circle:hover {
+  transform: scale(1.12);
+}
+.accent-swatch-circle--active {
+  border-color: var(--color-text, #e6e8ee);
+  box-shadow: 0 0 0 2px var(--color-accent, var(--accent));
+}
+
+.accent-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+
+.accent-custom__preview {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border, var(--border));
+  flex-shrink: 0;
+}
+
+.accent-custom__input {
+  width: 90px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: monospace;
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text, var(--text));
+  outline: none;
+}
+.accent-custom__input:focus {
+  border-color: var(--color-accent, var(--accent));
+}
+
+/* ===================================================================
+   Appearance settings - Poster roundness
+   =================================================================== */
+
+.poster-radius-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.poster-radius-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  background: none;
+  border: 2px solid var(--color-border, var(--border));
+  border-radius: var(--radius-md, 8px);
+  padding: 10px;
+  transition: border-color 0.15s;
+  width: 76px;
+}
+.poster-radius-card:hover {
+  border-color: var(--color-text-muted, var(--muted));
+}
+.poster-radius-card--active {
+  border-color: var(--color-accent, var(--accent));
+}
+
+.poster-radius-card__preview {
+  width: 40px;
+  height: 56px;
+  background: var(--color-surface-hover, rgba(255,255,255,0.1));
+}
+
+.poster-radius-card__label {
+  font-size: 11px;
+  color: var(--color-text-muted, var(--muted));
+  white-space: nowrap;
+}
+.poster-radius-card--active .poster-radius-card__label {
+  color: var(--color-accent, var(--accent));
+  font-weight: 600;
+}
+
+/* ===================================================================
+   Appearance settings - Background style
+   =================================================================== */
+
+.bg-style-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bg-style-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  background: none;
+  border: 2px solid var(--color-border, var(--border));
+  border-radius: var(--radius-md, 8px);
+  padding: 10px;
+  transition: border-color 0.15s;
+  width: 80px;
+}
+.bg-style-card:hover {
+  border-color: var(--color-text-muted, var(--muted));
+}
+.bg-style-card--active {
+  border-color: var(--color-accent, var(--accent));
+}
+
+.bg-style-card__preview {
+  width: 48px;
+  height: 32px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.bg-style-card__label {
+  font-size: 11px;
+  color: var(--color-text-muted, var(--muted));
+  text-align: center;
+  line-height: 1.3;
+}
+.bg-style-card--active .bg-style-card__label {
+  color: var(--color-accent, var(--accent));
+  font-weight: 600;
+}
+
+.bg-custom-color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.bg-custom-color-preview {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--color-border, var(--border));
+  flex-shrink: 0;
+}
+
+.bg-custom-color-input {
+  width: 100px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: monospace;
+}
+
+/* ===================================================================
+   Appearance settings - Custom CSS section
+   =================================================================== */
+
+.custom-css-textarea {
+  width: 100%;
+  min-height: 140px;
+  padding: 10px 12px;
+  font-family: "Consolas", "Menlo", "Monaco", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: var(--radius-md, 8px);
+  color: var(--color-text, var(--text));
+  resize: vertical;
+  outline: none;
+  display: block;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.custom-css-textarea:focus {
+  border-color: var(--color-accent, var(--accent));
+}
+
+.appearance-css-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.appearance-reset-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+/* ===================================================================
+   CSS variable: --poster-radius applied to all poster/card elements
+   =================================================================== */
+
+:root {
+  --poster-radius: 6px;
+  --app-bg-override: none;
+}
+
+/* Apply poster radius to all poster-style images/containers */
+.catalog-item__poster,
+.cw-card__poster,
+.library-card__poster,
+.hero-item__poster,
+.poster-img {
+  border-radius: var(--poster-radius);
+}
+
+/* Background override: applied to the main app content area and body */
+body {
+  background: var(--app-bg-override, var(--color-bg, var(--bg)));
+}
+.content {
+  background: var(--app-bg-override, var(--color-bg, var(--bg)));
+}
+

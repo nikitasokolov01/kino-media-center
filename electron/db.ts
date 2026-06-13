@@ -1039,6 +1039,35 @@ export interface AppSettings {
    * /experimental-embedded-player page + sidebar link.
    */
   experimentalEmbeddedPlayer: boolean;
+  /**
+   * UI theme. One of the built-in theme IDs ("default-dark", "oled-black",
+   * "purple", "blue", "red") or "" for the default.
+   */
+  themeId: string;
+  /**
+   * Accent color override as a hex string (e.g. "#ff6b6b"). Empty string means
+   * "use the theme's built-in accent colour".
+   */
+  accentColor: string;
+  /**
+   * User-supplied custom CSS injected after all built-in styles. Local only —
+   * no remote imports are allowed. Applied via <style id="custom-user-css">.
+   */
+  customCss: string;
+  /**
+   * Poster/card corner radius preset.
+   * "square" | "soft" | "rounded" | "pill". Default "soft".
+   */
+  posterRadius: string;
+  /**
+   * Background style override. "" | "oled-black" | "subtle-gradient" |
+   * "neon-gradient" | "custom-solid". Default "" (use theme default).
+   */
+  backgroundStyle: string;
+  /** Custom background solid color (hex). Used when backgroundStyle="custom-solid". */
+  customBackgroundColor: string;
+  /** Custom background gradient CSS value. Reserved for future use. */
+  customBackgroundGradient: string;
 }
 
 const DEFAULTS: AppSettings = {
@@ -1053,6 +1082,13 @@ const DEFAULTS: AppSettings = {
   preferredSourceQuality: "best",
   hideCamSources: true,
   experimentalEmbeddedPlayer: false,
+  themeId: "",
+  accentColor: "",
+  customCss: "",
+  posterRadius: "soft",
+  backgroundStyle: "",
+  customBackgroundColor: "",
+  customBackgroundGradient: "",
 };
 
 export function getSetting(key: string): string | null {
@@ -1113,6 +1149,13 @@ export function getAppSettings(): AppSettings {
       embedded === null
         ? DEFAULTS.experimentalEmbeddedPlayer
         : embedded === "true",
+    themeId:     getSetting("themeId")     ?? DEFAULTS.themeId,
+    accentColor: getSetting("accentColor") ?? DEFAULTS.accentColor,
+    customCss:   getSetting("customCss")   ?? DEFAULTS.customCss,
+    posterRadius:            getSetting("posterRadius")            ?? DEFAULTS.posterRadius,
+    backgroundStyle:         getSetting("backgroundStyle")         ?? DEFAULTS.backgroundStyle,
+    customBackgroundColor:   getSetting("customBackgroundColor")   ?? DEFAULTS.customBackgroundColor,
+    customBackgroundGradient: getSetting("customBackgroundGradient") ?? DEFAULTS.customBackgroundGradient,
   };
 }
 
@@ -1156,6 +1199,27 @@ export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.hideCamSources !== undefined) {
     setSetting("hideCamSources", patch.hideCamSources ? "true" : "false");
+  }
+  if (patch.themeId !== undefined) {
+    setSetting("themeId", patch.themeId);
+  }
+  if (patch.accentColor !== undefined) {
+    setSetting("accentColor", patch.accentColor);
+  }
+  if (patch.customCss !== undefined) {
+    setSetting("customCss", patch.customCss);
+  }
+  if (patch.posterRadius !== undefined) {
+    setSetting("posterRadius", patch.posterRadius);
+  }
+  if (patch.backgroundStyle !== undefined) {
+    setSetting("backgroundStyle", patch.backgroundStyle);
+  }
+  if (patch.customBackgroundColor !== undefined) {
+    setSetting("customBackgroundColor", patch.customBackgroundColor);
+  }
+  if (patch.customBackgroundGradient !== undefined) {
+    setSetting("customBackgroundGradient", patch.customBackgroundGradient);
   }
   return getAppSettings();
 }

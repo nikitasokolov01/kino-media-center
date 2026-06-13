@@ -13,7 +13,10 @@ catalogs/meta/streams. Implemented capabilities: installing addons, browsing
 catalogs, expanded catalog pages, global search, metadata detail pages,
 episode selection for series, stream source picking, MPV external playback,
 multiple profiles, a profile-specific Library/Watchlist, watched/unwatched
-state, Continue Watching, and MPV JSON-IPC watch-progress tracking.
+state, Continue Watching, MPV JSON-IPC watch-progress tracking, theme system
+(dark/OLED/purple/blue/red/neon-midnight + custom accent + custom CSS), custom themed
+scrollbars, a rotating widescreen hero banner on the Home page, and a
+tabbed Settings hub (left-nav sidebar, URL-driven via search params).
 
 **Active branch `experiment/libmpv-native`** also has an experimental embedded
 libmpv canvas player (gated behind `experimentalEmbeddedPlayer` flag). External
@@ -48,10 +51,21 @@ MPV remains the default/fallback. See section 10 and handoff doc for details.
   (hook owning embedded IPC + RAF loop, E4), `embeddedRequest.ts` (store/event
   bus for the overlay), `playRequest.ts` (PlayRequest dispatch boundary).
 - `src/state/` — React contexts: Profile, Settings, Library, Toast, ContextMenu.
+- `src/theme/` — **theme system**: `themes.ts` (BUILT_IN_THEMES, ACCENT_PRESETS
+  constants), `ThemeProvider.tsx` (applies `data-theme` attr, accent variable
+  overrides, and custom CSS injection). ThemeProvider is inside SettingsProvider
+  in `App.tsx`.
 - `src/pages/` — Home, Search, Library, Media, ExpandedCatalog, Player,
-  Settings, ProfilePicker, Addons.
+  ProfilePicker, Addons. `SettingsPage.tsx` is the Settings hub (left-nav
+  sidebar + content panel, URL-driven via `useSearchParams`).
+  `src/pages/settings/sections/` holds 10 section components: GeneralSettings,
+  AddonsSettings, EmbeddedPlayerSettings, ExternalMpvSettings,
+  SourceSelectionSettings, SubtitleSettings, AudioSettings, AppearanceSettings,
+  ProfileSettings, AboutSettings.
 - `src/components/` — CatalogRow, CatalogItem, ContinueWatchingRow,
-  EpisodeSelector, SourcesSection, StreamCard, ProfileAvatar, SearchBox, etc.
+  EpisodeSelector, SourcesSection, StreamCard, ProfileAvatar, SearchBox,
+  **HomeHero** (rotating banner, see section 12),
+  **AddonManager** (shared addon install/list UI used by AddonsPage + AddonsSettings), etc.
 - `src/types/` — preload/electron type declarations (`window.mediaCenter`,
   `window.electronAPI`). Note: multiple `.d.ts` files declare `electronAPI`
   (verify in code before editing typings).
@@ -60,7 +74,8 @@ MPV remains the default/fallback. See section 10 and handoff doc for details.
 
 `profiles` (id, name, color, emoji), `addons` (per profile), `watch_progress`
 (per profile + media + playable; has `completed`), `app_settings` (global
-key/value: defaultPlayer, mpvPath), `library_items` (per profile),
+key/value: defaultPlayer, mpvPath, **themeId**, **accentColor**, **customCss**,
+embeddedVol:<profileId>, …), `library_items` (per profile),
 `series_episodes` (global cached ordered episode list per series, drives
 Continue Watching "next episode"). DB lives in Electron `userData`.
 
@@ -107,6 +122,13 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
   completed detection (≥90% or ≤15 min remaining) — Continue Watching and
   watched state work identically to external MPV.
   External MPV remains the default/fallback and is completely unaffected.
+- **Theme system** — Settings → Appearance: 6 built-in themes (Default Dark,
+  OLED Black, Purple, Blue, Red, Neon Midnight), accent colour override, poster
+  roundness, background style, custom CSS. All apply immediately. See section 11.
+- **Home page search bar** — inline search form on HomePage navigates to
+  /search?q=... on submit. Replaces the old sidebar SearchBox.
+- **Sidebar** — simplified to Home + Library only. Gear icon at bottom links
+  to /settings. Search, Addons, Settings links removed from nav sidebar.
 
 ## 4. Important Architecture Rules
 
@@ -363,3 +385,166 @@ Four-layer: `ipc-channels.ts` → `main.ts` → `preload.ts` → `preload.d.ts`.
 **Progress/watched correctness**: since remaining ≤ 180 s satisfies the
 `duration - timePos ≤ 900 s` completed threshold in `flushProgress()`, the current
 episode is correctly marked as watched during the `stopPlayback()` teardown.
+
+## 11. Theme System
+
+Settings → Appearance section. Changes apply immediately without restart.
+
+### Architecture
+
+- **`src/theme/themes.ts`** — `BUILT_IN_THEMES` array (5 themes), `ACCENT_PRESETS`
+  array (6 named accent colours + custom hex). Pure constants, no React.
+- **`src/theme/ThemeProvider.tsx`** — React component wrapping the app inside
+  `SettingsProvider`. Reads all appearance settings and applies five effects:
+  1. Sets `data-theme="<id>"` on `document.documentElement` → CSS palette.
+  2. Sets `--color-accent` / `--color-accent-hover` / `--accent` inline on `<html>`.
+  3. Sets `--poster-radius` on `<html>` from the `posterRadius` setting.
+  4. Sets `--app-bg-override` on `<html>` from `backgroundStyle` + `customBackgroundColor`.
+  5. Injects/updates `<style id="custom-user-css">` in `<head>` (textContent, not innerHTML).
+  Valid themes: "default-dark", "oled-black", "purple", "blue", "red", "neon-midnight".
+- **`src/styles.css`** — `:root` now declares the full semantic token set:
+  `--color-bg`, `--color-bg-elevated`, `--color-surface`, `--color-surface-hover`,
+  `--color-border`, `--color-text`, `--color-text-muted`, `--color-accent`,
+  `--color-accent-hover`, `--color-accent-2`, `--color-danger`, `--color-success`,
+  `--color-warning`, `--color-accent-fg`, `--radius-sm/md/lg`, `--shadow-soft`,
+  `--font-ui`. Legacy aliases (`--bg`, `--panel`, etc.) point to the new tokens so
+  all existing selectors continue to work without rewrites.
+  Theme palette overrides live in `html[data-theme="<id>"]` blocks also in
+  `styles.css`.
+
+### Built-in themes
+
+| ID | Label |
+|----|-------|
+| *(empty)* / `default-dark` | Default Dark (#0f1115 bg, #6aa3ff accent) |
+| `oled-black` | OLED Black (pure #000 bg) |
+| `purple` | Purple (#0d0b14 bg, #a87fff accent) |
+| `blue` | Blue (#090d14 bg, #4d9fff accent) |
+| `red` | Red (#130b0b bg, #ff6b6b accent) |
+| `neon-midnight` | Neon Midnight (#050713 bg, #38bdf8 cyan accent) |
+
+### AppSettings fields
+
+- `themeId: string` -- stored as `"themeId"` key in `app_settings`. Empty = default.
+- `accentColor: string` -- stored as `"accentColor"`. Empty = theme default.
+- `customCss: string` -- stored as `"customCss"`. Empty = none.
+- `posterRadius: string` -- stored as `"posterRadius"`. Values: "square"/"soft"/"rounded"/"pill". Default "soft".
+- `backgroundStyle: string` -- stored as `"backgroundStyle"`. Values: ""/"oled-black"/"subtle-gradient"/"neon-gradient"/"custom-solid".
+- `customBackgroundColor: string` -- stored as `"customBackgroundColor"`. Hex color for custom-solid bg.
+- `customBackgroundGradient: string` -- stored as `"customBackgroundGradient"`. Reserved for future use.
+
+### Rules for future work
+
+- **Never hardcode colours in new UI.** Use `var(--color-accent)`, `var(--color-bg)`,
+  etc. Use `var(--color-accent-fg)` for text on accent-coloured backgrounds.
+- New built-in themes: add to `BUILT_IN_THEMES` in `themes.ts` AND add a
+  `html[data-theme="<id>"]` block to `styles.css`.
+- The embedded player overlay uses its own opacity/rgba colours (intentionally
+  black with transparency) -- these do not need to respond to themes.
+
+## 12. Custom Scrollbars + Home Hero
+
+### Custom scrollbars (`src/styles.css`)
+
+Three CSS variables control all scrollbar appearance; they live in `:root` and
+are overridden per theme by the `html[data-theme="<id>"]` blocks as needed:
+
+- `--scrollbar-size: 6px` -- width (and height for horizontal bars)
+- `--scrollbar-track: transparent`
+- `--scrollbar-thumb: rgba(255,255,255,0.12)` -- subtle white
+- `--scrollbar-thumb-hover: color-mix(in srgb, var(--color-accent) 45%, rgba(255,255,255,0.18))` -- accent-tinted on hover
+
+Chromium/Electron styling uses `::-webkit-scrollbar*` pseudo-elements.
+Firefox fallback uses `scrollbar-width: thin` + `scrollbar-color` on `*`.
+All scrollable areas (catalog strips, source drawer, settings, episode list,
+etc.) automatically inherit the thin rounded look without individual rule changes.
+
+### Home hero banner (`src/components/HomeHero.tsx`)
+
+A rotating widescreen banner rendered at the top of `src/pages/HomePage.tsx`
+when addons are loaded and have browsable catalogs.
+
+**Behaviour:**
+- Fetches from the first `MAX_CATALOGS_TO_FETCH = 3` catalog descriptors.
+- Selects up to `MAX_HERO_ITEMS = 8` items; first pass prefers items with a
+  `background` (landscape backdrop); second pass fills with `poster`-only items.
+- Deduplicates by `type:id` across catalogs.
+- Rotates every 10 seconds; pauses while the mouse is over the hero.
+- Fade transition (180 ms) between items.
+- Left/right arrow buttons (visible on hover) and pill/dot indicators.
+- "More Info" button navigates to `/media/:type/:id` (existing detail page).
+- Skeleton shimmer shows while catalog data loads; renders nothing if no items.
+
+**CSS (`src/styles.css`, block `/* --- Home hero banner --- */`):**
+- Height: `clamp(280px, 38vw, 520px)`
+- Background image layer (`.home-hero__bg`) -- opacity transitions for fade.
+- Dark vignette gradient (`.home-hero__gradient`) -- ensures text readability.
+- Content (`.home-hero__content`) -- fades + translates up on enter.
+- All colours via CSS variables; no hardcoded hex.
+
+**Integration in `src/pages/HomePage.tsx`:**
+- `showHero: boolean = profile != null && !addonsLoading && descriptors.length > 0`
+- When `showHero`, renders `<HomeHero descriptors={descriptors} />` and hides
+  the `<h1>Home</h1>` page title.
+- Uses ternary (`? :`) rather than `&&` to avoid the `null | Profile` JSX
+  children issue that causes TSX parse errors in TypeScript 5.9+.
+
+## 13. Settings Hub
+
+### Architecture
+
+Settings live at `/settings` (same route). `SettingsPage.tsx` renders a
+two-column layout: a 200px left nav sidebar and a scrollable right content panel.
+
+Navigation is URL-driven via `useSearchParams` -- no new routes added to App.tsx:
+- `?tab=general` -- Default player
+- `?tab=addons` -- Addon manager (reuses AddonManager component)
+- `?tab=player&sub=embedded` -- Experimental embedded player toggle
+- `?tab=player&sub=mpv` -- External MPV path + test
+- `?tab=player&sub=sources` -- Source selection / quality / CAM filter
+- `?tab=player&sub=subtitles` -- Auto-enable subtitles + language
+- `?tab=player&sub=audio` -- Audio language + anime override
+- `?tab=appearance` -- Theme / accent / custom CSS (includes Neon Midnight)
+- `?tab=profiles` -- Profile list + sidebar switcher link
+- `?tab=about` -- App info table
+
+### Files
+
+- `src/pages/SettingsPage.tsx` -- hub shell with left nav + `renderContent()` switch
+- `src/pages/settings/sections/GeneralSettings.tsx`
+- `src/pages/settings/sections/AddonsSettings.tsx` -- renders `<AddonManager />`
+- `src/pages/settings/sections/EmbeddedPlayerSettings.tsx`
+- `src/pages/settings/sections/ExternalMpvSettings.tsx`
+- `src/pages/settings/sections/SourceSelectionSettings.tsx`
+- `src/pages/settings/sections/SubtitleSettings.tsx`
+- `src/pages/settings/sections/AudioSettings.tsx`
+- `src/pages/settings/sections/AppearanceSettings.tsx`
+- `src/pages/settings/sections/ProfileSettings.tsx`
+- `src/pages/settings/sections/AboutSettings.tsx`
+- `src/components/AddonManager.tsx` -- shared between AddonsPage and AddonsSettings
+
+### Old Addons route
+
+`/addons` route and sidebar link are preserved unchanged. `AddonsPage.tsx` is now
+a thin wrapper around `AddonManager`. The same `AddonManager` renders inside
+`AddonsSettings` in the Settings hub.
+
+### CSS classes (in `src/styles.css`)
+
+- `.settings-hub-page` -- outer page wrapper (flex column, no padding)
+- `.settings-hub` -- 2-column grid (200px | 1fr)
+- `.settings-hub__nav` -- left sidebar
+- `.settings-nav-item` -- nav button; `--active` uses accent; `--sub` indented
+- `.settings-hub__panel` -- scrollable right panel (28px 36px padding)
+- `.settings-panel__title` -- 20px bold section heading
+- `.settings-section__label` -- muted uppercase sub-group label
+- `.profile-settings-list/row/badge` -- profile list in Profiles section
+- `.about-table` -- key/value table in About section
+
+### Write/Edit tool truncation rule (critical)
+
+Never write content containing em dash (U+2014), ellipsis (U+2026), middle dot
+(U+00B7), or box-drawing characters (U+2500 etc.) via the Edit or Write tools.
+The tool silently truncates the file at those characters. Use bash heredoc
+(`cat > file << 'ENDOFFILE'`) for all file creation, and Python byte-level
+operations for repairs.
