@@ -44,6 +44,7 @@ import type { StreamSourceResult, StremioStream } from "../core/stremio/types.js
 import { addonSupportsResource } from "../core/stremio/meta.js";
 import { streamDedupKey } from "../core/stremio/streams.js";
 import { chooseBestSource, detectResolution } from "../core/player/sourceRanking.js";
+import { buildPlayRequest, dispatchPlayRequest } from "../features/player/playRequest.js";
 
 // Dev flag — safe in both Vite (renderer) and plain Node.
 const isDev =
@@ -116,6 +117,8 @@ export default function EmbeddedPlayerOverlay() {
   // ---- Fullscreen (E5 fix) -------------------------------------------------
 
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Increment to force the playback lifecycle effect to retry after an error.
+  const [retryKey, setRetryKey] = useState(0);
   const fullscreenAvailable =
     typeof window !== "undefined" && !!window.embeddedMpv?.setFullscreen;
   // Ref-mirror so the req-change effect below can read the current value
@@ -271,7 +274,7 @@ export default function EmbeddedPlayerOverlay() {
       stopPlayback();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [req, profileId, startPlayback, stopPlayback]);
+  }, [req, profileId, retryKey, startPlayback, stopPlayback]);
 
   // ---- E8: Resolve next episode + prefetch when req changes ---------------
 
@@ -701,6 +704,20 @@ export default function EmbeddedPlayerOverlay() {
 
   // ---- Keyboard shortcuts --------------------------------------------------
 
+  const handleRetry = useCallback(() => {
+    stopPlayback();
+    setRetryKey((k) => k + 1);
+  }, [stopPlayback]);
+
+  const handleOpenInMpv = useCallback(() => {
+    if (!req) return;
+    const mpvReq = buildPlayRequest({ ...req, backend: "external-mpv" }, "manual");
+    void dispatchPlayRequest(mpvReq, {
+      profileId: profileId ?? undefined,
+    });
+    clearEmbeddedPlayRequest();
+  }, [req, profileId]);
+
   const handleClose = useCallback(() => clearEmbeddedPlayRequest(), []);
 
   useEffect(() => {
@@ -896,20 +913,61 @@ export default function EmbeddedPlayerOverlay() {
           </div>
         )}
 
-        {/* ── Error banners ── */}
+        {/* ── Error banners + recovery actions ── */}
         {(!available || error) && (
           <div className="emb-overlay__errors">
             {!available && (
-              <div className="error-banner emb-overlay__banner" role="alert">
-                Embedded player addon unavailable — <code>window.embeddedMpv</code> is
-                missing. Make sure the native addon is built (
-                <code>native/embedded-mpv/</code>) and all DLLs are present in{" "}
-                <code>vendor/</code>.
+              <div className="emb-overlay__error-panel" role="alert">
+                <div className="emb-overlay__error-message">
+                  Embedded player addon unavailable —{" "}
+                  <code>window.embeddedMpv</code> is missing. Make sure the native
+                  addon is built (<code>native/embedded-mpv/</code>) and all DLLs
+                  are present in <code>vendor/</code>.
+                </div>
+                <div className="emb-overlay__error-actions">
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn emb-overlay__err-btn--primary"
+                    onClick={handleOpenInMpv}
+                  >
+                    Open in MPV
+                  </button>
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn"
+                    onClick={handleClose}
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             )}
             {error && (
-              <div className="error-banner emb-overlay__banner" role="alert">
-                {error}
+              <div className="emb-overlay__error-panel" role="alert">
+                <div className="emb-overlay__error-message">{error}</div>
+                <div className="emb-overlay__error-actions">
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn emb-overlay__err-btn--primary"
+                    onClick={handleRetry}
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn"
+                    onClick={handleOpenInMpv}
+                  >
+                    Open in MPV
+                  </button>
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn"
+                    onClick={handleClose}
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             )}
           </div>

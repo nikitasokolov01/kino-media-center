@@ -33,10 +33,20 @@ interface Props {
   renderSelectedSources?: () => ReactNode;
   /** Episode ids that are marked watched/completed. */
   watchedIds?: Set<string>;
-  /** The next-up episode id (first unwatched) — gets a "Next Up" badge. */
+  /** The next-up episode id (first unwatched) -- gets a "Next Up" badge. */
   nextUpVideoId?: string | null;
   onToggleEpisodeWatched?: (video: StremioVideo, completed: boolean) => void;
   onMarkSeasonWatched?: (videos: StremioVideo[], completed: boolean) => void;
+  /**
+   * When provided, each episode card gets a Play button. Called with the
+   * episode video when the user clicks Play directly (bypasses expand/select).
+   */
+  onPlayEpisode?: (video: StremioVideo) => void;
+  /**
+   * Id of the episode currently being loaded via onPlayEpisode. Shows a
+   * spinner/disabled state on that card's Play button to prevent double-tap.
+   */
+  playingEpisodeId?: string | null;
 }
 
 type SeasonKey = number | "specials" | "other";
@@ -120,6 +130,8 @@ export default function EpisodeSelector({
   nextUpVideoId,
   onToggleEpisodeWatched,
   onMarkSeasonWatched,
+  onPlayEpisode,
+  playingEpisodeId,
 }: Props) {
   const groups = useMemo(() => groupBySeason(videos), [videos]);
   const watched = watchedIds ?? new Set<string>();
@@ -326,8 +338,25 @@ export default function EpisodeSelector({
                   </div>
                 </button>
 
-                {onToggleEpisodeWatched && (
-                  <div className="episode-item__actions">
+                <div className="episode-item__actions">
+                  {onPlayEpisode && (
+                    <button
+                      type="button"
+                      className={`episode-item__play-btn${playingEpisodeId === v.id ? " episode-item__play-btn--loading" : ""}`}
+                      onClick={(e) => { e.stopPropagation(); onPlayEpisode(v); }}
+                      disabled={playingEpisodeId === v.id}
+                      title={`Play ${videoTitle(v)}`}
+                      aria-label={`Play ${videoTitle(v)}`}
+                    >
+                      {playingEpisodeId === v.id ? (
+                        <span className="episode-item__play-spinner" aria-hidden>...</span>
+                      ) : (
+                        <span aria-hidden>&#9654;</span>
+                      )}
+                      {playingEpisodeId === v.id ? "Loading" : "Play"}
+                    </button>
+                  )}
+                  {onToggleEpisodeWatched && (
                     <button
                       type="button"
                       className="ghost-button ghost-button--xs"
@@ -335,8 +364,8 @@ export default function EpisodeSelector({
                     >
                       {isWatched ? "Mark Episode Unwatched" : "Mark Episode Watched"}
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {isSelected && renderSelectedSources && (
                   <div className="episode-item__sources">

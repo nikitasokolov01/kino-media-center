@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useProfile } from "../state/ProfileContext.js";
+import { invalidateHomeCatalogCache } from "../core/catalog/homeCatalogCache.js";
 import AddonCard from "./AddonCard.js";
 import type { AddonRow } from "../types/preload.js";
 
@@ -39,6 +40,7 @@ export default function AddonManager() {
     setInstallError(null);
     try {
       await window.mediaCenter.addons.install(profile.id, trimmed);
+      invalidateHomeCatalogCache(profile.id);
       setUrl("");
       await refresh();
     } catch (e) {
@@ -52,6 +54,7 @@ export default function AddonManager() {
     if (!profile) return;
     try {
       await window.mediaCenter.addons.remove(profile.id, id);
+      invalidateHomeCatalogCache(profile.id);
       await refresh();
     } catch (e) {
       setListError(e instanceof Error ? e.message : String(e));

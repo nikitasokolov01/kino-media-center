@@ -1,4 +1,4 @@
-# Current Session Handoff -- Navigation Cleanup + Appearance Settings Polish
+# Current Session Handoff -- Home Cache, Error Panel, Episode Play Button
 
 ## Status: Complete (TypeScript clean)
 
@@ -6,158 +6,112 @@
 
 ## What Was Built This Session
 
-### Part 1: Sidebar cleanup (App.tsx)
+### Part 1: Home catalog in-memory cache (src/core/catalog/homeCatalogCache.ts)
 
-The sidebar now shows only Home and Library nav items. Search, Addons, Settings,
-and Embedded (exp) nav links are removed from the sidebar. SearchBox component is
-removed from the sidebar. A gear icon (SVG) is added at the bottom of the sidebar
-as a `<Link to="/settings">` with class `sidebar__gear-btn`. All routes (/addons,
-/search, /settings, /experimental-embedded-player) remain intact in App.tsx Routes.
+New module: `src/core/catalog/homeCatalogCache.ts`
+- Module-level `Map<string, CacheEntry>` with 15-minute TTL.
+- Key: `${profileId}:${addonId}:${type}:${catalogId}` (profile-scoped, no cross-contamination).
+- Exports: `makeHomeCacheKey`, `getHomeCatalogCache`, `setHomeCatalogCache`,
+  `invalidateHomeCatalogCache(profileId)`, `clearAllHomeCatalogCache`,
+  `clearExpiredHomeCatalogCache`.
+- TTL expiry is lazy (pruned on read, not on a timer).
+- No SQLite persistence -- stream URLs expire, only metadata survives restart.
 
-Changed structure in `src/App.tsx`:
-- Added `Link` to react-router-dom imports (alongside NavLink)
-- Removed `SearchBox` import
-- Sidebar nav: Home + Library only
-- Bottom area: `div.sidebar__bottom` containing gear link + profile switcher
+`src/components/CatalogRow.tsx` updated:
+- Seeds `items` state from cache on mount (no shimmer if cache hit).
+- Seeds `loading` as `false` if cache hit, `true` if miss.
+- On cache hit: runs a silent background refresh -- updates cache and items on success,
+  keeps old data on failure (zero visible flicker).
+- On cache miss: shows shimmer, fetches, updates state and cache on success.
+- Uses `useProfile()` to build the profile-scoped key.
 
-### Part 2: Home page inline search bar (HomePage.tsx)
+`src/components/AddonManager.tsx` updated:
+- Calls `invalidateHomeCatalogCache(profile.id)` after successful addon install.
+- Calls `invalidateHomeCatalogCache(profile.id)` after successful addon remove.
+- This ensures the next Home visit re-fetches fresh catalogs from new/removed addons.
 
-`src/pages/HomePage.tsx` now renders a styled search form between the hero banner
-and the Continue Watching row. It uses `useNavigate` to push `/search?q=...` on
-submit -- same destination as the old SearchBox.
+### Part 2: Embedded player error panel (EmbeddedPlayerOverlay.tsx + styles.css)
 
-New hooks/state: `searchQuery`, `navigate` (useNavigate), `searchInputRef`.
-New JSX: `form.home-search > div.home-search__inner > [icon, input, clear button]`.
+Replaced the plain `<p className="emb-overlay__error">` banner with a structured
+error panel:
+- `<div className="emb-overlay__error-panel">` with message + three action buttons.
+- **Retry**: increments `retryKey` state (added to the lifecycle effect deps) which
+  re-runs the full `doStart()` async without clearing the overlay. Calls `stopPlayback()`
+  first to teardown the previous attempt cleanly.
+- **Open in MPV**: builds a new `PlayRequest` with `backend: "external-mpv"` by
+  spreading `req` and overriding the backend field. Dispatches via `dispatchPlayRequest`,
+  then calls `clearEmbeddedPlayRequest()` to close the overlay.
+- **Close**: existing `handleClose` function.
+- The addon-unavailable state gets the same Open in MPV + Close buttons.
 
-### Part 3/5: New CSS in styles.css
+New CSS classes in `styles.css`:
+- `.emb-overlay__error-panel` -- centered panel with dark bg + red border
+- `.emb-overlay__error-message` -- body text
+- `.emb-overlay__error-actions` -- flex row of buttons
+- `.emb-overlay__err-btn` -- ghost-style button (semi-transparent)
+- `.emb-overlay__err-btn--primary` -- accent-tinted primary variant
 
-A large CSS block was appended to `src/styles.css` (via Python to avoid truncation):
+### Part 3: Direct Play button on episode cards
 
-- `.sidebar__bottom` -- flex column container for gear + profile switcher
-- `.sidebar__gear-btn` -- icon link button, hover/active states
-- `.home-search` / `.home-search__inner` / `.home-search__input` / `.home-search__icon` / `.home-search__clear` -- inline search bar styles
-- Global themed controls: `input, select, textarea` inherit `--color-surface`, `--color-border`, `--color-text` with focus ring using `--color-accent`
-- `.appearance-themes` / `.theme-card` / `.theme-card__*` -- theme preset cards with mini preview, active border + checkmark
-- `.accent-row` / `.accent-swatch-circle` / `.accent-custom` -- circular accent color swatches
-- `.poster-radius-options` / `.poster-radius-card` / `.poster-radius-card__*` -- poster roundness options with preview
-- `.bg-style-options` / `.bg-style-card` / `.bg-style-card__*` -- background style tiles
-- `.custom-css-textarea` / `.appearance-css-actions` / `.appearance-reset-row` -- custom CSS section
-- `:root { --poster-radius: 6px; --app-bg-override: none; }` -- new CSS variables
-- `body`, `.content` -- inherit `--app-bg-override` for background override
+`src/components/EpisodeSelector.tsx`:
+- Added `onPlayEpisode?: (video: StremioVideo) => void` prop.
+- Added `playingEpisodeId?: string | null` prop.
+- Added `.episode-item__play-btn` inside each episode card's `episode-item__actions`
+  div. Button shows a "Play" label (triangle + text) and switches to "Loading..."
+  + disabled state when `playingEpisodeId === v.id`.
+- `episode-item__actions` flex direction changed from end-justified to start-justified
+  so the Play button leads, followed by Mark Watched.
 
-### Part 4: Redesigned AppearanceSettings.tsx
+`src/pages/MediaPage.tsx`:
+- Added imports: `useSettings`, `chooseBestSource`, `resolveAudioLanguage`,
+  `buildPlayRequest`, `dispatchPlayRequest`, `getCachedSources`, `makePrefetchKey`,
+  `prefetchEpisodeSources`, `streamDedupKey`, `StremioStream`, `StreamSourceResult`.
+- Added `playingEpisodeId` state (`string | null`).
+- Added `handleDirectPlayEpisode(video)` async function:
+  1. Guards against double-click (`playingEpisodeId === video.id`).
+  2. Calls `handleEpisodeSelect(video)` to update selection immediately.
+  3. If neither `autoPlayBestSource` nor `autoSelectSource` is on, returns early
+     (SourcesSection handles it in manual mode; no spinner).
+  4. Sets `playingEpisodeId = video.id`.
+  5. Checks `getCachedSources(makePrefetchKey(...))` for instant result.
+  6. On cache miss: fans out `window.mediaCenter.streams.fetch` to all eligible
+     stream addons in parallel via `Promise.allSettled`.
+  7. Calls `chooseBestSource(results, settings)` to pick the best stream.
+  8. Builds a `PlayRequest` with the correct backend (embedded or external-mpv)
+     and dispatches via `dispatchPlayRequest`.
+  9. Clears `playingEpisodeId` in the `finally` block.
+- Passes `onPlayEpisode={handleDirectPlayEpisode}` and `playingEpisodeId={playingEpisodeId}`
+  to `EpisodeSelector`.
 
-`src/pages/settings/sections/AppearanceSettings.tsx` completely rewritten with 5 sections:
-
-**A. Theme Presets** -- Cards with mini preview (sidebar colour strip, main area with accent pill + text lines). Selected card gets accent border + checkmark badge.
-
-**B. Accent Color** -- Circular `accent-swatch-circle` buttons (32px) for ACCENT_PRESETS, with ring indicator on selected. Custom hex input preserved.
-
-**C. Poster Roundness** -- 4 options: Square (2px), Soft (6px), Rounded (12px), Pill (24px). Each shows a preview div with the corresponding border-radius. Saves `posterRadius` to app_settings.
-
-**D. Background Style** -- 5 tiles: Default, OLED Black, Subtle Gradient, Neon Gradient, Custom Color. Selected gets accent border. Custom Color shows a hex input. Saves `backgroundStyle` + `customBackgroundColor`.
-
-**E. Custom CSS** -- Styled monospace textarea with Apply CSS + Clear CSS buttons. Debounced auto-save at 600ms.
-
-Reset section at bottom clears all appearance settings.
-
-### Part 6: New AppSettings fields
-
-Four new fields added across the full settings stack (types, DB, context):
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `posterRadius` | `"soft"` | Poster corner radius preset |
-| `backgroundStyle` | `""` | Background style override |
-| `customBackgroundColor` | `""` | Custom solid bg hex color |
-| `customBackgroundGradient` | `""` | Custom gradient (reserved) |
-
-Files touched:
-- `src/core/player/types.ts` -- added 4 fields to AppSettings interface
-- `electron/db.ts` -- added to AppSettings interface, DEFAULTS, getAppSettings, updateAppSettings
-- `src/state/SettingsContext.tsx` -- added 4 fields to FALLBACK object
-
-### ThemeProvider.tsx: neon-midnight fix + new effects
-
-`src/theme/ThemeProvider.tsx` rewritten cleanly (was previously not in git HEAD):
-
-- Added `"neon-midnight"` to validThemes array (was missing, preventing the theme from applying)
-- Added effect for `posterRadius`: sets `--poster-radius` on `document.documentElement`
-- Added effect for `backgroundStyle` + `customBackgroundColor`: sets `--app-bg-override` on `document.documentElement`
-- Helper functions `POSTER_RADIUS_MAP` and `buildBackground()` added before component
-
----
-
-## Files Changed This Session
-
-| File | Change |
-|------|--------|
-| `src/App.tsx` | Sidebar cleanup: removed nav items + SearchBox, added gear icon, sidebar__bottom wrapper |
-| `src/pages/HomePage.tsx` | Added inline search bar with useNavigate + useRef |
-| `src/styles.css` | Appended ~350 lines of new CSS (gear, search, appearance sections, CSS vars) |
-| `src/pages/settings/sections/AppearanceSettings.tsx` | Full redesign: theme cards, circular swatches, poster roundness, bg style, custom CSS |
-| `src/theme/ThemeProvider.tsx` | Rewritten: neon-midnight fix, posterRadius effect, backgroundStyle effect |
-| `src/core/player/types.ts` | Added 4 new AppSettings fields |
-| `electron/db.ts` | Added 4 new fields to AppSettings interface, DEFAULTS, getAppSettings, updateAppSettings |
-| `src/state/SettingsContext.tsx` | Added 4 new fields to FALLBACK |
-
-**Not touched:** electron/main.ts, electron/mpv.ts, electron/mpvIpc.ts, src/core/stremio/*, src/core/player/playerBackends.ts, EmbeddedPlayerOverlay.tsx, useEmbeddedPlayback.ts, native/, any IPC channels.
+`src/styles.css`:
+- Added `.episode-item__play-btn` and modifier classes.
+- Uses `--color-accent` + CSS variable-based transparent fills; no hardcoded hex.
 
 ---
 
-## Build State
+## TypeScript Status
 
-- `npx tsc --noEmit` -- clean (no output)
-- No new npm dependencies
-- No new IPC channels
-- No database migrations (additive SQLite key-value pairs only)
+`tsc --noEmit` passes with zero errors or warnings.
 
 ---
 
-## CSS Variables Added
+## Files Changed
 
-| Variable | Default | Applied by |
-|----------|---------|-----------|
-| `--poster-radius` | `6px` | ThemeProvider effect; applied to `.catalog-item__poster` etc. |
-| `--app-bg-override` | `none` | ThemeProvider effect; applied to `body` and `.content` |
-
----
-
-## How to Test Each New Feature
-
-**Sidebar cleanup:** Sidebar should show only Home + Library. Gear icon at bottom opens /settings. /addons, /search still work via URL or internal links.
-
-**Home search:** Type in the search bar on the Home page and press Enter or click the search icon. Should navigate to /search?q=... Clicking X clears the input.
-
-**Appearance > Theme:** Settings -> Appearance -> Theme section. Click theme cards. Mini preview shows each theme's palette. Selected card has accent border + checkmark.
-
-**Appearance > Accent:** Circular swatches apply immediately. Custom hex input in the same row.
-
-**Appearance > Poster Roundness:** Square / Soft / Rounded / Pill options. Poster images on catalog cards should update corner radius immediately.
-
-**Appearance > Background:** Default / OLED Black / Subtle Gradient / Neon Gradient / Custom Color. Body/content background changes immediately.
-
-**Appearance > Custom CSS:** Type CSS, it auto-saves after 600ms or click Apply CSS. Click Clear CSS to reset.
+- `src/core/catalog/homeCatalogCache.ts` (new)
+- `src/components/CatalogRow.tsx` (cache integration)
+- `src/components/AddonManager.tsx` (cache invalidation on install/remove)
+- `src/components/EmbeddedPlayerOverlay.tsx` (error panel + retry/open-in-mpv)
+- `src/components/EpisodeSelector.tsx` (onPlayEpisode prop + Play button)
+- `src/pages/MediaPage.tsx` (handleDirectPlayEpisode + new imports)
+- `src/styles.css` (error panel CSS + episode play button CSS)
 
 ---
 
-## Known: Edit/Write tool truncation with multi-byte UTF-8
+## Guardrails Honored
 
-**Rule:** Never use the Edit or Write tool to write content containing em dash (U+2014),
-ellipsis (U+2026), or any multi-byte UTF-8 character. The tool silently truncates.
-Use bash heredoc or Python byte-level writes for all file creation/repair.
-
-This session had multiple truncation events and required Python rewrites for:
-App.tsx, types.ts, SettingsContext.tsx, ThemeProvider.tsx, HomePage.tsx.
-All were reconstructed cleanly via Python.
-
----
-
-## Guardrails (unchanged)
-
-- No playback logic changes
-- No embedded MPV native code changes
-- No source ranking/fetching changes
-- No IPC channel changes
-- External MPV fallback untouched
-- ThemeProvider nesting in App.tsx preserved
+- Native embedded MPV code (`native/`, `electron/mpv.ts`, `electron/mpvIpc.ts`) untouched.
+- External MPV dispatch path unchanged.
+- Debrid/torrent logic untouched.
+- Profiles, library, Continue Watching, SQLite migrations untouched.
+- Source ranking reused as-is via `chooseBestSource`.
+- Prefetch cache reused via `getCachedSources` / `makePrefetchKey`.

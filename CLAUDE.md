@@ -65,6 +65,7 @@ MPV remains the default/fallback. See section 10 and handoff doc for details.
 - `src/components/` — CatalogRow, CatalogItem, ContinueWatchingRow,
   EpisodeSelector, SourcesSection, StreamCard, ProfileAvatar, SearchBox,
   **HomeHero** (rotating banner, see section 12),
+  **TopNav** (floating top navigation bar — brand, nav links, search, gear, profile pill),
   **AddonManager** (shared addon install/list UI used by AddonsPage + AddonsSettings), etc.
 - `src/types/` — preload/electron type declarations (`window.mediaCenter`,
   `window.electronAPI`). Note: multiple `.d.ts` files declare `electronAPI`
@@ -87,13 +88,17 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
 - **Addon install + manifest parsing** — normalize base/`manifest.json` URLs,
   fetch, validate (id/name/resources/types), store per profile. Dev-only
   "fake/broken addon" button for failure testing.
-- **Catalog rows** (Home) + **expanded catalog pages** with skip-based
-  pagination + dedup.
+- **Catalog rows** (Home) with **in-memory TTL cache** (`src/core/catalog/homeCatalogCache.ts`,
+  15-min TTL, profile-scoped) — returning to Home after navigating away is instant;
+  background refresh keeps data fresh. Invalidated on addon install/remove.
+  + **Expanded catalog pages** with skip-based pagination + dedup.
 - **Search** — fan-out across searchable catalogs, dedup, per-addon warnings.
 - **Media detail pages** — meta from first compatible addon; poster,
   background, cast/genres/etc.
 - **Episode selector** (series) — season tabs, watched checkmarks, Next Up
-  badge, per-episode + per-season mark watched.
+  badge, per-episode + per-season mark watched. Each episode card has a direct
+  **Play button** that fetches sources and dispatches to the best stream
+  immediately (respects `autoPlayBestSource` / `experimentalEmbeddedPlayer` settings).
 - **Inline episode sources** — for series, the source picker renders inside the
   selected episode card (not at page bottom); auto-scrolls into view.
 - **Stream source picker** — cards with quality/codec/HDR/size detection,
@@ -125,10 +130,13 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
 - **Theme system** — Settings → Appearance: 6 built-in themes (Default Dark,
   OLED Black, Purple, Blue, Red, Neon Midnight), accent colour override, poster
   roundness, background style, custom CSS. All apply immediately. See section 11.
-- **Home page search bar** — inline search form on HomePage navigates to
-  /search?q=... on submit. Replaces the old sidebar SearchBox.
-- **Sidebar** — simplified to Home + Library only. Gear icon at bottom links
-  to /settings. Search, Addons, Settings links removed from nav sidebar.
+- **Floating top nav** — `src/components/TopNav.tsx` renders a glassmorphism
+  pill bar at the top of every page: brand text, Home + Library NavLinks,
+  a global search input (navigates to /search?q=... from any page), a Settings gear
+  icon, and a profile pill that calls clearActiveProfile(). Sidebar is removed entirely.
+- **Poster roundness** — `--poster-radius` CSS variable is applied to wrapper
+  elements (`.catalog-item__poster-wrap`, `.cw-card__poster-wrap`, `.media-detail__poster`)
+  which have `overflow: hidden`. Controlled by Settings -> Appearance -> Poster Roundness.
 
 ## 4. Important Architecture Rules
 

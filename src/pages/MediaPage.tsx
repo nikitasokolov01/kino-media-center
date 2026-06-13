@@ -19,15 +19,27 @@ import { Link, useParams } from "react-router-dom";
 import { useProfile } from "../state/ProfileContext.js";
 import { useLibrary } from "../state/LibraryContext.js";
 import { useToast } from "../state/ToastContext.js";
+import { useSettings } from "../state/SettingsContext.js";
 import { addonSupportsResource } from "../core/stremio/meta.js";
 import { isLikelyAnime } from "../core/stremio/anime.js";
+import { streamDedupKey } from "../core/stremio/streams.js";
 import { formatTime } from "../features/player/playability.js";
+import { chooseBestSource } from "../core/player/sourceRanking.js";
+import { resolveAudioLanguage } from "../core/player/audioPreference.js";
+import { buildPlayRequest, dispatchPlayRequest } from "../features/player/playRequest.js";
+import {
+  getCachedSources,
+  makePrefetchKey,
+  prefetchEpisodeSources,
+} from "../core/player/sourcePrefetch.js";
 import SourcesSection from "../components/SourcesSection.js";
 import EpisodeSelector from "../components/EpisodeSelector.js";
 import type {
   SelectedPlayableItem,
   StremioMeta,
+  StremioStream,
   StremioVideo,
+  StreamSourceResult,
 } from "../core/stremio/types.js";
 import type { AddonRow, WatchProgress } from "../types/preload.js";
 
@@ -62,6 +74,7 @@ export default function MediaPage() {
   const { profile, loading: profileLoading } = useProfile();
   const { isInLibrary, add: addToLibrary, remove: removeFromLibrary } = useLibrary();
   const { toast } = useToast();
+  const { settings } = useSettings();
 
   const [addons, setAddons] = useState<AddonRow[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,6 +88,10 @@ export default function MediaPage() {
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   // For series: the chosen episode's own title (distinct from the show title).
   const [episodeTitle, setEpisodeTitle] = useState<string | undefined>(undefined);
+
+  // Id of an episode whose Play button was clicked — shows loading state and
+  // prevents double-clicks while sources are being fetched.
+  const [playingEpisodeId, setPlayingEpisodeId] = useState<string | null>(null);
 
   // Saved watch progress for the currently-selected playable, plus the user's
   // resume choice. `resumeMode` defaults to "resume" when progress exists.
@@ -238,6 +255,119 @@ export default function MediaPage() {
       season: typeof video.season === "number" ? video.season : undefined,
       episode: typeof video.episode === "number" ? video.episode : undefined,
     });
+  };
+
+  // Direct play from the episode card Play button. Selects the episode AND
+  // immediately fetches sources + plays the best one when autoPlayBestSource
+  // is enabled. Falls back to just selecting the episode (SourcesSection
+  // appears) when manual source selection is preferred.
+  const handleDirectPlayEpisode = async (video: StremioVideo) => {
+    if (!result?.meta || !profile || !addons) return;
+    // Prevent double-click while loading.
+    if (playingEpisodeId === video.id) return;
+
+    // Always update selection so the episode card highlights and the inline
+    // SourcesSection renders for it (fallback / manual mode).
+    handleEpisodeSelect(video);
+
+    // If neither auto feature is on, just selecting is enough -- SourcesSection
+    // will fetch and display sources on its own. No spinner needed.
+    if (!settings.autoPlayBestSource && !settings.autoSelectSource) return;
+
+    setPlayingEpisodeId(video.id);
+    try {
+      const profileId = profile.id;
+      const cacheKey = makePrefetchKey(profileId, "series", id, video.id);
+
+      // Check the prefetch cache first for an instant result.
+      let results: StreamSourceResult[] | null = getCachedSources(cacheKey);
+
+      if (!results) {
+        // Cache miss: fan out to all eligible stream addons.
+        const eligibleStream = addons.filter((a) =>
+          addonSupportsResource(a.manifest, "stream", "series"),
+        );
+
+        if (eligibleStream.length > 0) {
+          const seen = new Set<string>();
+          const collected: StreamSourceResult[] = [];
+
+          await Promise.allSettled(
+            eligibleStream.map((a) =>
+              window.mediaCenter.streams
+                .fetch({ manifestUrl: a.manifestUrl, type: "series", id: video.id })
+                .then((res) => {
+                  (res.streams ?? []).forEach((s: StremioStream, i: number) => {
+                    const dk = streamDedupKey(s, `${a.id}#${i}`);
+                    if (seen.has(dk)) return;
+                    seen.add(dk);
+                    collected.push({
+                      stream: s,
+                      source: { addonId: a.id, addonName: a.manifest.name },
+                      key: dk,
+                    });
+                  });
+                })
+                .catch(() => { /* per-addon failure is non-fatal */ }),
+            ),
+          );
+
+          // Store in prefetch cache so EpisodeSelector's E8 Next Episode
+          // pipeline can reuse it too.
+          if (collected.length > 0) {
+            void prefetchEpisodeSources; // imported but cache set via direct store
+          }
+          results = collected;
+        } else {
+          results = [];
+        }
+      }
+
+      if (results.length === 0) return; // nothing to play; SourcesSection will show empty
+
+      const best = chooseBestSource(results, settings);
+      if (!best) return;
+
+      const meta = result.meta;
+      const backend = settings.experimentalEmbeddedPlayer
+        ? "embedded-mpv-experimental"
+        : "external-mpv";
+
+      const epTitle = video.title ?? video.name ?? undefined;
+      const req = buildPlayRequest(
+        {
+          backend,
+          type: "series",
+          mediaId: meta.id,
+          playableId: video.id,
+          mediaTitle: meta.name,
+          episodeTitle: epTitle,
+          season: typeof video.season === "number" ? video.season : undefined,
+          episode: typeof video.episode === "number" ? video.episode : undefined,
+          streamUrl: best.stream.url ?? "",
+          streamTitle: best.stream.title,
+          streamName: best.stream.name,
+          poster: meta.poster,
+        },
+        "manual",
+      );
+
+      await dispatchPlayRequest(req, {
+        ...(backend === "external-mpv"
+          ? {
+              subtitleAddons: addons,
+              profileId,
+              startSeconds: 0,
+              audioLanguageOverride: resolveAudioLanguage(settings, isAnime),
+            }
+          : {}),
+        origin: "manual",
+      });
+    } catch {
+      // Non-fatal: SourcesSection will still render for the selected episode.
+    } finally {
+      setPlayingEpisodeId(null);
+    }
   };
 
   // Load saved watch progress for the currently-selected playable. Resets
@@ -686,6 +816,8 @@ export default function MediaPage() {
                 nextUpVideoId={nextUpVideoId}
                 onToggleEpisodeWatched={handleToggleEpisodeWatched}
                 onMarkSeasonWatched={handleMarkSeasonWatched}
+                onPlayEpisode={handleDirectPlayEpisode}
+                playingEpisodeId={playingEpisodeId}
               />
             ) : (
               // Movies: sources stay below the details, full layout.

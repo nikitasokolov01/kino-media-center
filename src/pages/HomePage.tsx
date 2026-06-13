@@ -1,5 +1,5 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useProfile } from "../state/ProfileContext.js";
 import CatalogRow from "../components/CatalogRow.js";
 import ContinueWatchingRow from "../components/ContinueWatchingRow.js";
@@ -45,16 +45,6 @@ export default function HomePage() {
   const [addons, setAddons] = useState<AddonRow[]>([]);
   const [addonsLoading, setAddonsLoading] = useState(true);
   const [addonsError, setAddonsError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const navigate = useNavigate();
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  function handleSearch(e: FormEvent) {
-    e.preventDefault();
-    const q = searchQuery.trim();
-    if (!q) return;
-    void navigate(`/search?q=${encodeURIComponent(q)}`);
-  }
 
   useEffect(() => {
     if (!profile) return;
@@ -88,62 +78,6 @@ export default function HomePage() {
       {showHero ? null : <h1>Home</h1>}
 
       {showHero ? <HomeHero descriptors={descriptors} /> : null}
-
-      {/* Inline search bar */}
-      {profile != null ? (
-        <form className="home-search" onSubmit={handleSearch} role="search">
-          <div className="home-search__inner">
-            <svg
-              className="home-search__icon"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              ref={searchInputRef}
-              className="home-search__input"
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search movies, shows, anime..."
-              autoComplete="off"
-              spellCheck={false}
-            />
-            {searchQuery ? (
-              <button
-                type="button"
-                className="home-search__clear"
-                onClick={() => {
-                  setSearchQuery("");
-                  searchInputRef.current?.focus();
-                }}
-                aria-label="Clear search"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            ) : null}
-          </div>
-        </form>
-      ) : null}
 
       {profile != null ? <ContinueWatchingRow /> : null}
 
