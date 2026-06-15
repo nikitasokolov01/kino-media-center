@@ -42,6 +42,23 @@ export interface PlayRequest {
   streamTitle?: string;
   streamName?: string;
   poster?: string;
+  /**
+   * When true, the overlay opens immediately (player-first flow) and resolves
+   * the best source internally. `streamUrl` is ignored in this case.
+   * Only meaningful for `backend: "embedded-mpv-experimental"`.
+   */
+  pendingSourceFetch?: boolean;
+  /**
+   * When true AND pendingSourceFetch is true, the overlay fetches sources
+   * then waits for the user to pick one instead of auto-playing the best.
+   * Reflects the app-level autoPlayBestSource === false setting.
+   */
+  manualSourceSelect?: boolean;
+  /**
+   * When true, the content is likely anime. The overlay uses this to apply
+   * anime-specific audio/subtitle preferences (animeAudioLanguage setting).
+   */
+  isAnime?: boolean;
 }
 
 /**
@@ -228,6 +245,29 @@ export interface AppSettings {
   customBackgroundColor: string;
   /** Custom background gradient CSS. Reserved for future use. */
   customBackgroundGradient: string;
+  /** Gradient background color A (hex). Used when backgroundStyle is subtle/neon-gradient. */
+  bgGradientColorA: string;
+  /** Gradient background color B (hex). Used when backgroundStyle is subtle/neon-gradient. */
+  bgGradientColorB: string;
+  /** Gradient angle in degrees. Default 135. */
+  bgGradientAngle: number;
+  /** JSON-serialised CustomThemePreset[] -- user-defined named colour themes. */
+  customThemes: string;
+  /** ID of the currently applied custom theme preset (from customThemes), or empty. */
+  activeCustomThemeId: string;
+  /**
+   * Home hero source mode.
+   * "auto" = pick from first available catalogs (existing default behaviour).
+   * "catalog" = use the specific addon catalog identified by heroAddonId +
+   *   heroCatalogType + heroCatalogId.
+   */
+  heroSourceMode: "auto" | "catalog";
+  /** Addon ID (manifest `id`) whose catalog is used for the hero in catalog mode. */
+  heroAddonId: string;
+  /** Catalog type ("movie" or "series") for the hero in catalog mode. */
+  heroCatalogType: string;
+  /** Catalog ID for the hero in catalog mode. */
+  heroCatalogId: string;
 }
 
 /** Per-stream-format capability hints used by the action picker. */
@@ -237,7 +277,7 @@ export interface BackendCapability {
   description: string;
   /**
    * True if this backend is wired up *right now*. mpv-ipc and
-   * mpv-embedded-future return false in this build — they exist in the type
+   * mpv-embedded-future return false in this build -- they exist in the type
    * so the abstraction is forward-compatible.
    */
   implemented: boolean;

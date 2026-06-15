@@ -8,6 +8,7 @@
 //   3. style#custom-user-css injected into head -> custom CSS.
 //   4. --poster-radius CSS variable -> card/poster corner radius.
 //   5. --app-bg-override CSS variable -> background style override.
+//   6. Custom theme vars -> user-built colour presets (authoritative override).
 //
 // Security: custom CSS is set via textContent (never innerHTML/eval).
 // Remote @import is blocked in the UI. We do NOT evaluate it as code.
@@ -30,18 +31,34 @@ const POSTER_RADIUS_MAP: Record<string, string> = {
 };
 
 // Background style -> CSS background value
-function buildBackground(style: string, customColor: string): string | null {
+function buildBackground(
+  style: string,
+  customColor: string,
+  customGradient: string,
+  gradientColorA: string,
+  gradientColorB: string,
+  gradientAngle: number,
+): string | null {
+  const validHex = (h: string) => /^#[0-9a-f]{3,8}$/i.test(h.trim());
   switch (style) {
     case "oled-black":
       return "#000000";
-    case "subtle-gradient":
-      return "linear-gradient(135deg, #0a0d14 0%, #111520 100%)";
-    case "neon-gradient":
-      return "linear-gradient(135deg, #050713 0%, #0d0933 50%, #05130d 100%)";
+    case "subtle-gradient": {
+      const a = validHex(gradientColorA) ? gradientColorA : "#0a0d14";
+      const b = validHex(gradientColorB) ? gradientColorB : "#111520";
+      return `linear-gradient(${gradientAngle}deg, ${a} 0%, ${b} 100%)`;
+    }
+    case "neon-gradient": {
+      const a = validHex(gradientColorA) ? gradientColorA : "#050713";
+      const b = validHex(gradientColorB) ? gradientColorB : "#0d0933";
+      return `linear-gradient(${gradientAngle}deg, ${a} 0%, ${b} 60%, #05130d 100%)`;
+    }
     case "custom-solid":
-      return /^#[0-9a-f]{3,8}$/i.test(customColor.trim())
-        ? customColor.trim()
-        : null;
+      return validHex(customColor) ? customColor.trim() : null;
+    case "custom-gradient": {
+      const g = customGradient.trim();
+      return g.includes("gradient(") ? g : null;
+    }
     default:
       return null;
   }
@@ -56,6 +73,12 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
     posterRadius,
     backgroundStyle,
     customBackgroundColor,
+    customBackgroundGradient,
+    bgGradientColorA,
+    bgGradientColorB,
+    bgGradientAngle,
+    customThemes,
+    activeCustomThemeId,
   } = settings;
 
   // 1. Apply data-theme attribute
@@ -68,6 +91,10 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
       "blue",
       "red",
       "neon-midnight",
+      "emerald-noir",
+      "amber-theater",
+      "arctic-blue",
+      "royal-violet",
     ];
     if (themeId && validThemes.includes(themeId)) {
       root.setAttribute("data-theme", themeId);
@@ -76,9 +103,16 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
     }
   }, [themeId]);
 
-  // 2. Apply accent colour override as inline CSS variables on <html>
+  // 2. Apply accent colour override as inline CSS variables on <html>.
+  // When a custom theme is active, the custom theme controls accent -- skip.
   useEffect(() => {
     const root = document.documentElement;
+    if (activeCustomThemeId) {
+      root.style.removeProperty("--color-accent");
+      root.style.removeProperty("--color-accent-hover");
+      root.style.removeProperty("--accent");
+      return;
+    }
     const hex = accentColor.trim();
     if (hex && /^#[0-9a-f]{3,8}$/i.test(hex)) {
       root.style.setProperty("--color-accent", hex);
@@ -89,7 +123,7 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
       root.style.removeProperty("--color-accent-hover");
       root.style.removeProperty("--accent");
     }
-  }, [accentColor]);
+  }, [accentColor, activeCustomThemeId]);
 
   // 3. Apply poster radius
   useEffect(() => {
@@ -98,16 +132,21 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
     root.style.setProperty("--poster-radius", radius);
   }, [posterRadius]);
 
-  // 4. Apply background style
+  // 4. Apply background style.
+  // When a custom theme is active, the custom theme controls background -- skip.
   useEffect(() => {
     const root = document.documentElement;
-    const bg = buildBackground(backgroundStyle, customBackgroundColor);
+    if (activeCustomThemeId) {
+      root.style.removeProperty("--app-bg-override");
+      return;
+    }
+    const bg = buildBackground(backgroundStyle, customBackgroundColor, customBackgroundGradient, bgGradientColorA, bgGradientColorB, bgGradientAngle);
     if (bg) {
       root.style.setProperty("--app-bg-override", bg);
     } else {
       root.style.removeProperty("--app-bg-override");
     }
-  }, [backgroundStyle, customBackgroundColor]);
+  }, [backgroundStyle, customBackgroundColor, customBackgroundGradient, bgGradientColorA, bgGradientColorB, bgGradientAngle, activeCustomThemeId]);
 
   // 5. Inject / update custom CSS
   useEffect(() => {
@@ -119,6 +158,49 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
     }
     el.textContent = customCss ?? "";
   }, [customCss]);
+
+  // 6. Apply custom theme variable overrides (user-built colour presets).
+  // This runs AFTER Effects 2 and 4 in React's effect order, so when a custom
+  // theme is active those effects have already cleared accent/background
+  // overrides. This effect applies the full custom palette and also clears
+  // --app-bg-override so the body uses --color-bg from the custom theme.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!activeCustomThemeId || !customThemes) {
+      // Remove any previously applied custom vars
+      root.removeAttribute("data-custom-theme");
+      return;
+    }
+    try {
+      const presets = JSON.parse(customThemes) as Array<{ id: string; vars: Record<string, string> }>;
+      const preset = presets.find((p) => p.id === activeCustomThemeId);
+      if (preset) {
+        for (const [k, v] of Object.entries(preset.vars)) {
+          if (k.startsWith("--color-") && typeof v === "string") {
+            root.style.setProperty(k, v);
+          }
+        }
+        // Let the body background follow --color-bg from the custom theme.
+        root.style.removeProperty("--app-bg-override");
+        root.setAttribute("data-custom-theme", activeCustomThemeId);
+      }
+    } catch {
+      // malformed JSON -- ignore
+    }
+    return () => {
+      // On change/unmount, remove all previously set custom vars so stale
+      // values do not linger when switching themes or deactivating.
+      const vars = [
+        "--color-bg", "--color-bg-elevated", "--color-surface",
+        "--color-surface-hover", "--color-border", "--color-text",
+        "--color-text-muted", "--color-accent", "--color-accent-hover",
+        "--color-success", "--color-danger",
+      ];
+      for (const v of vars) root.style.removeProperty(v);
+      root.style.removeProperty("--app-bg-override");
+      root.removeAttribute("data-custom-theme");
+    };
+  }, [activeCustomThemeId, customThemes]);
 
   // Cleanup on unmount
   useEffect(() => {

@@ -2,9 +2,14 @@
 // roundness, background style, and custom CSS section.
 // All changes apply immediately via ThemeProvider CSS variable injection.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useSettings } from "../../../state/SettingsContext.js";
+import { useProfile } from "../../../state/ProfileContext.js";
 import { BUILT_IN_THEMES, ACCENT_PRESETS } from "../../../theme/themes.js";
+import { catalogRequiresExtras } from "../../../core/stremio/catalog.js";
+import CustomThemeBuilder from "./CustomThemeBuilder.js";
+import type { AddonRow } from "../../../types/preload.js";
+import type { StremioCatalog } from "../../../core/stremio/types.js";
 
 // Poster radius presets
 const POSTER_RADIUS_OPTIONS = [
@@ -20,20 +25,82 @@ const BG_STYLE_OPTIONS = [
   { id: "oled-black",     label: "OLED Black",   preview: "#000000" },
   { id: "subtle-gradient", label: "Subtle\nGrad", preview: "linear-gradient(135deg, #0a0d14 0%, #111520 100%)" },
   { id: "neon-gradient",  label: "Neon\nGrad",  preview: "linear-gradient(135deg, #050713 0%, #0d0933 50%, #05130d 100%)" },
-  { id: "custom-solid",   label: "Custom\nColor", preview: "repeating-linear-gradient(45deg, #444 0px, #444 2px, #333 2px, #333 8px)" },
+  { id: "custom-solid",   label: "Custom\nColor",  preview: "repeating-linear-gradient(45deg, #444 0px, #444 2px, #333 2px, #333 8px)" },
+  { id: "custom-gradient", label: "Custom\nGrad",   preview: "repeating-linear-gradient(45deg, #226 0px, #226 2px, #113 2px, #113 8px)" },
 ] as const;
+
+// Catalog descriptor shape (mirrors HomePage.tsx, used for hero source selection)
+interface CatalogOption {
+  key: string;
+  addonId: string;
+  addonName: string;
+  manifestUrl: string;
+  type: string;
+  catalogId: string;
+  catalogName: string;
+}
+
+function catalogOptionsFromAddons(addons: AddonRow[]): CatalogOption[] {
+  const out: CatalogOption[] = [];
+  for (const a of addons) {
+    const catalogs = (a.manifest.catalogs ?? []) as StremioCatalog[];
+    if (!Array.isArray(catalogs)) continue;
+    for (const c of catalogs) {
+      if (!c || typeof c.type !== "string" || typeof c.id !== "string") continue;
+      if (catalogRequiresExtras(c)) continue;
+      out.push({
+        key: `${a.id}:${c.type}:${c.id}`,
+        addonId: a.id,
+        addonName: a.manifest.name,
+        manifestUrl: a.manifestUrl,
+        type: c.type,
+        catalogId: c.id,
+        catalogName: c.name ?? `${c.type} / ${c.id}`,
+      });
+    }
+  }
+  return out;
+}
 
 export default function AppearanceSettings() {
   const { settings, update } = useSettings();
+  const { profile } = useProfile();
   const [saveError, setSaveError] = useState<string | null>(null);
   const [customCssInput, setCustomCssInput] = useState(settings.customCss);
   const [accentHexInput, setAccentHexInput] = useState(settings.accentColor);
   const [bgColorInput, setBgColorInput] = useState(settings.customBackgroundColor);
+  const [bgGradientInput, setBgGradientInput] = useState(settings.customBackgroundGradient);
+  const [gradientColorA, setGradientColorA] = useState(settings.bgGradientColorA || "#0a0d14");
+  const [gradientColorB, setGradientColorB] = useState(settings.bgGradientColorB || "#111520");
+  const [gradientAngle, setGradientAngle] = useState(settings.bgGradientAngle ?? 135);
+  const [exportIncludeCss, setExportIncludeCss] = useState(false);
   const customCssSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState(false);
+  const [copyLabel, setCopyLabel] = useState("Copy example CSS");
+
+  // Addon list for hero source selection
+  const [heroAddons, setHeroAddons] = useState<AddonRow[]>([]);
+  useEffect(() => {
+    if (!profile) return;
+    window.mediaCenter.addons.list(profile.id).then(setHeroAddons).catch(() => {});
+  }, [profile]);
+
+  const heroCatalogOptions = useMemo(() => catalogOptionsFromAddons(heroAddons), [heroAddons]);
+
+  // Current hero catalog selection (combined key: "addonId:type:catalogId")
+  const heroCatalogKey = settings.heroAddonId && settings.heroCatalogType && settings.heroCatalogId
+    ? `${settings.heroAddonId}:${settings.heroCatalogType}:${settings.heroCatalogId}`
+    : "";
 
   useEffect(() => { setCustomCssInput(settings.customCss); }, [settings.customCss]);
   useEffect(() => { setAccentHexInput(settings.accentColor); }, [settings.accentColor]);
   useEffect(() => { setBgColorInput(settings.customBackgroundColor); }, [settings.customBackgroundColor]);
+  useEffect(() => { setBgGradientInput(settings.customBackgroundGradient); }, [settings.customBackgroundGradient]);
+  useEffect(() => { setGradientColorA(settings.bgGradientColorA || "#0a0d14"); }, [settings.bgGradientColorA]);
+  useEffect(() => { setGradientColorB(settings.bgGradientColorB || "#111520"); }, [settings.bgGradientColorB]);
+  useEffect(() => { setGradientAngle(settings.bgGradientAngle ?? 135); }, [settings.bgGradientAngle]);
 
   async function save(patch: Parameters<typeof update>[0]) {
     setSaveError(null);
@@ -45,8 +112,103 @@ export default function AppearanceSettings() {
   }
 
   const currentTheme = settings.themeId || "default-dark";
+
+  // --- Export theme as JSON file ---
+  const handleExportTheme = useCallback(() => {
+    const payload: Record<string, string> = {
+      themeId: settings.themeId || "default-dark",
+      accentColor: settings.accentColor || "",
+      posterRadius: settings.posterRadius || "soft",
+      backgroundStyle: settings.backgroundStyle || "",
+      customBackgroundColor: settings.customBackgroundColor || "",
+      customBackgroundGradient: settings.customBackgroundGradient || "",
+    };
+    if (exportIncludeCss) payload.customCss = settings.customCss || "";
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "media-center-theme.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [settings, exportIncludeCss]);
+
+  // --- Import theme from JSON file ---
+  const handleImportFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setImportError(null);
+      setImportSuccess(false);
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const raw = JSON.parse(reader.result as string) as Record<string, unknown>;
+          // Basic shape validation -- no remote CSS or URL fields accepted.
+          const allowed = new Set([
+            "themeId", "accentColor", "posterRadius",
+            "backgroundStyle", "customBackgroundColor",
+            "customBackgroundGradient", "customCss",
+          ]);
+          const patch: Partial<typeof settings> = {};
+          for (const key of allowed) {
+            if (typeof raw[key] === "string") {
+              (patch as Record<string, string>)[key] = raw[key] as string;
+            }
+          }
+          // Validate themeId against known themes (or empty = default)
+          const validIds = new Set(["", "default-dark", "oled-black", "purple", "blue", "red", "neon-midnight"]);
+          if (patch.themeId !== undefined && !validIds.has(patch.themeId)) {
+            patch.themeId = "default-dark";
+          }
+          // Validate backgroundStyle against known values.
+          const validBgStyles = new Set(["", "oled-black", "subtle-gradient",
+            "neon-gradient", "custom-solid", "custom-gradient"]);
+          if (patch.backgroundStyle !== undefined && !validBgStyles.has(patch.backgroundStyle)) {
+            delete patch.backgroundStyle;
+          }
+          void save(patch).then(() => {
+            setImportSuccess(true);
+            setTimeout(() => setImportSuccess(false), 2500);
+          });
+        } catch {
+          setImportError("Invalid theme file. Expected a JSON file exported from this app.");
+        }
+        // Reset input so the same file can be re-imported if needed.
+        if (importFileRef.current) importFileRef.current.value = "";
+      };
+      reader.readAsText(file);
+    },
+    [save, settings],
+  );
+
+  // --- Copy example CSS ---
+  const EXAMPLE_CSS = `:root {
+  --color-accent: #ff9f6b;
+  --color-bg: #0f1115;
+  --color-surface: #1a1e27;
+}
+
+.catalog-row__title { letter-spacing: 0.04em; }`;
+
+  const handleCopyExampleCss = useCallback(() => {
+    void navigator.clipboard.writeText(EXAMPLE_CSS).then(() => {
+      setCopyLabel("Copied!");
+      setTimeout(() => setCopyLabel("Copy example CSS"), 2000);
+    });
+  }, [EXAMPLE_CSS]);
   const currentRadius = settings.posterRadius || "soft";
   const currentBgStyle = settings.backgroundStyle ?? "";
+
+  // Custom theme state
+  const customThemeActive = !!settings.activeCustomThemeId;
+  const activePresetName: string = (() => {
+    if (!customThemeActive || !settings.customThemes) return "";
+    try {
+      const presets = JSON.parse(settings.customThemes) as Array<{ id: string; name: string }>;
+      return presets.find((p) => p.id === settings.activeCustomThemeId)?.name ?? "Custom Theme";
+    } catch { return "Custom Theme"; }
+  })();
 
   return (
     <div className="settings-panel">
@@ -59,10 +221,39 @@ export default function AppearanceSettings() {
         <div className="error-banner">Could not save: {saveError}</div>
       )}
 
+      {/* --- Active custom theme banner --- */}
+      {customThemeActive && (
+        <div className="custom-theme-active-banner">
+          <div className="custom-theme-active-banner__info">
+            <span className="custom-theme-active-banner__icon">&#10003;</span>
+            <div>
+              <strong>Custom theme active: {activePresetName}</strong>
+              <p className="muted small" style={{ margin: "2px 0 0" }}>
+                Built-in theme, accent colour, and background controls are
+                overridden by your custom theme. Edit or deactivate it in the
+                Custom Theme Builder below.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="ghost-button"
+            style={{ flexShrink: 0 }}
+            onClick={() => void save({ activeCustomThemeId: "" })}
+          >
+            Deactivate
+          </button>
+        </div>
+      )}
+
       {/* --- A. Theme Presets --- */}
       <section className="settings-section">
         <h3 className="settings-section__label">Theme</h3>
-        <div className="appearance-themes">
+        <div
+          className="appearance-themes"
+          style={customThemeActive ? { opacity: 0.4, pointerEvents: "none", userSelect: "none" } : undefined}
+          aria-disabled={customThemeActive}
+        >
           {BUILT_IN_THEMES.map((theme) => {
             const isActive = currentTheme === theme.id;
             return (
@@ -114,7 +305,11 @@ export default function AppearanceSettings() {
       </section>
 
       {/* --- B. Accent Color --- */}
-      <section className="settings-section">
+      <section
+        className="settings-section"
+        style={customThemeActive ? { opacity: 0.4, pointerEvents: "none", userSelect: "none" } : undefined}
+        aria-disabled={customThemeActive}
+      >
         <h3 className="settings-section__label">Accent colour</h3>
         <div className="accent-row">
           {ACCENT_PRESETS.map((preset) => {
@@ -193,7 +388,11 @@ export default function AppearanceSettings() {
       </section>
 
       {/* --- D. Background Style --- */}
-      <section className="settings-section">
+      <section
+        className="settings-section"
+        style={customThemeActive ? { opacity: 0.4, pointerEvents: "none", userSelect: "none" } : undefined}
+        aria-disabled={customThemeActive}
+      >
         <h3 className="settings-section__label">Background</h3>
         <div className="bg-style-options">
           {BG_STYLE_OPTIONS.map((opt) => {
@@ -247,6 +446,107 @@ export default function AppearanceSettings() {
             <span className="muted small">Solid background color</span>
           </div>
         )}
+
+        {(currentBgStyle === "subtle-gradient" || currentBgStyle === "neon-gradient") && (
+          <div className="bg-gradient-controls">
+            <div className="bg-gradient-preview" style={{
+              background: `linear-gradient(${gradientAngle}deg, ${gradientColorA} 0%, ${gradientColorB} 100%)`,
+            }} />
+            <div className="bg-gradient-pickers">
+              <label className="bg-gradient-picker-label">
+                <span className="muted small">Color A</span>
+                <div className="bg-gradient-picker-row">
+                  <input
+                    type="color"
+                    value={gradientColorA}
+                    onChange={(e) => {
+                      setGradientColorA(e.target.value);
+                      void save({ bgGradientColorA: e.target.value });
+                    }}
+                    className="bg-gradient-color-input"
+                  />
+                  <input
+                    type="text"
+                    className="bg-custom-color-input accent-custom__input"
+                    value={gradientColorA}
+                    maxLength={7}
+                    spellCheck={false}
+                    onChange={(e) => setGradientColorA(e.target.value)}
+                    onBlur={() => {
+                      if (/^#[0-9a-f]{3,8}$/i.test(gradientColorA.trim())) {
+                        void save({ bgGradientColorA: gradientColorA.trim() });
+                      }
+                    }}
+                  />
+                </div>
+              </label>
+              <label className="bg-gradient-picker-label">
+                <span className="muted small">Color B</span>
+                <div className="bg-gradient-picker-row">
+                  <input
+                    type="color"
+                    value={gradientColorB}
+                    onChange={(e) => {
+                      setGradientColorB(e.target.value);
+                      void save({ bgGradientColorB: e.target.value });
+                    }}
+                    className="bg-gradient-color-input"
+                  />
+                  <input
+                    type="text"
+                    className="bg-custom-color-input accent-custom__input"
+                    value={gradientColorB}
+                    maxLength={7}
+                    spellCheck={false}
+                    onChange={(e) => setGradientColorB(e.target.value)}
+                    onBlur={() => {
+                      if (/^#[0-9a-f]{3,8}$/i.test(gradientColorB.trim())) {
+                        void save({ bgGradientColorB: gradientColorB.trim() });
+                      }
+                    }}
+                  />
+                </div>
+              </label>
+              <label className="bg-gradient-picker-label bg-gradient-picker-label--angle">
+                <span className="muted small">Angle: {gradientAngle}deg</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={360}
+                  step={5}
+                  value={gradientAngle}
+                  className="bg-gradient-angle-slider"
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setGradientAngle(v);
+                    void save({ bgGradientAngle: v });
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {currentBgStyle === "custom-gradient" && (
+          <div className="bg-custom-gradient-row">
+            <textarea
+              className="custom-css-textarea"
+              style={{ minHeight: 60, marginTop: 8 }}
+              value={bgGradientInput}
+              placeholder="linear-gradient(135deg, #0a0d14 0%, #1a0a2e 50%, #0a1428 100%)"
+              spellCheck={false}
+              rows={2}
+              onChange={(e) => setBgGradientInput(e.target.value)}
+              onBlur={() => {
+                const val = bgGradientInput.trim();
+                void save({ customBackgroundGradient: val });
+              }}
+            />
+            <span className="muted small" style={{ marginTop: 4 }}>
+              Any valid CSS background value, e.g. <code>linear-gradient(...)</code>
+            </span>
+          </div>
+        )}
       </section>
 
       {/* --- E. Custom CSS --- */}
@@ -296,10 +596,144 @@ export default function AppearanceSettings() {
         </div>
       </section>
 
-      {/* Reset all appearance */}
+      {/* --- F. Custom Theme Builder --- */}
+      <section className="settings-section">
+        <h3 className="settings-section__label">Custom theme builder</h3>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          Build a named colour theme from scratch. Saved themes can be applied
+          on top of any built-in base theme.
+        </p>
+        <CustomThemeBuilder />
+      </section>
+
+      {/* Import / Export theme */}
       <section className="settings-section" style={{ borderTop: "1px solid var(--color-border, var(--border))", paddingTop: 16 }}>
+        <h3 className="settings-section__label">Import / Export theme</h3>
+        <p className="muted small" style={{ marginBottom: 10 }}>
+          Export saves your current theme preset, accent colour, poster roundness,
+          and background style as a JSON file (custom CSS is not included for
+          safety). Import reads it back and applies each field instantly.
+        </p>
+
+        {importError && (
+          <div className="error-banner" style={{ marginBottom: 8 }}>{importError}</div>
+        )}
+        {importSuccess && (
+          <div className="success-banner" style={{ marginBottom: 8 }}>Theme imported!</div>
+        )}
+
+        <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, cursor: "pointer", fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={exportIncludeCss}
+            onChange={(e) => setExportIncludeCss(e.target.checked)}
+          />
+          Include custom CSS in export
+        </label>
+        <div className="appearance-actions-row">
+          <button type="button" className="ghost-button" onClick={handleExportTheme}>
+            Export theme
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => importFileRef.current?.click()}
+          >
+            Import theme
+          </button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: "none" }}
+            onChange={handleImportFile}
+          />
+          <button type="button" className="ghost-button" onClick={handleCopyExampleCss}>
+            {copyLabel}
+          </button>
+        </div>
+      </section>
+
+      {/* --- G. Home Hero Source --- */}
+      <section className="settings-section">
+        <h3 className="settings-section__label">Home hero source</h3>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          Choose which catalog populates the rotating banner at the top of the
+          Home page. &quot;Auto&quot; picks the first available catalogs from
+          your installed addons.
+        </p>
+        <div className="setting-row" style={{ marginBottom: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
+            <input
+              type="radio"
+              name="heroSourceMode"
+              value="auto"
+              checked={settings.heroSourceMode !== "catalog"}
+              onChange={() => void save({ heroSourceMode: "auto" })}
+            />
+            Auto (first available catalogs)
+          </label>
+        </div>
+        <div className="setting-row" style={{ marginBottom: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
+            <input
+              type="radio"
+              name="heroSourceMode"
+              value="catalog"
+              checked={settings.heroSourceMode === "catalog"}
+              onChange={() => void save({ heroSourceMode: "catalog" })}
+            />
+            Specific catalog
+          </label>
+        </div>
+        {settings.heroSourceMode === "catalog" && (
+          <div style={{ marginTop: 8 }}>
+            {heroCatalogOptions.length === 0 ? (
+              <p className="muted small">No browsable catalogs found. Install an addon with a catalog first.</p>
+            ) : (
+              <>
+                <label style={{ display: "block", fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>
+                  Catalog
+                </label>
+                <select
+                  className="select-input"
+                  value={heroCatalogKey}
+                  onChange={(e) => {
+                    const opt = heroCatalogOptions.find((o) => o.key === e.target.value);
+                    if (!opt) {
+                      void save({ heroAddonId: "", heroCatalogType: "", heroCatalogId: "" });
+                    } else {
+                      void save({
+                        heroAddonId: opt.addonId,
+                        heroCatalogType: opt.type,
+                        heroCatalogId: opt.catalogId,
+                      });
+                    }
+                  }}
+                  style={{ minWidth: 320 }}
+                >
+                  <option value="">-- Select a catalog --</option>
+                  {heroCatalogOptions.map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {opt.addonName} - {opt.catalogName} ({opt.type})
+                    </option>
+                  ))}
+                </select>
+                {heroCatalogKey && !heroCatalogOptions.find((o) => o.key === heroCatalogKey) && (
+                  <p className="muted small" style={{ marginTop: 6 }}>
+                    Previously selected catalog is no longer available. Please pick another.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Reset all appearance */}
+      <section className="settings-section">
         <h3 className="settings-section__label">Reset</h3>
-        <div className="appearance-reset-row">
+        <div className="appearance-actions-row">
           <button
             type="button"
             className="ghost-button"
@@ -312,10 +746,12 @@ export default function AppearanceSettings() {
                 backgroundStyle: "",
                 customBackgroundColor: "",
                 customBackgroundGradient: "",
+                activeCustomThemeId: "",
               });
               setCustomCssInput("");
               setAccentHexInput("");
               setBgColorInput("");
+              setBgGradientInput("");
             }}
           >
             Reset all appearance

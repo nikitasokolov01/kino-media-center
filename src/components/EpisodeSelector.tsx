@@ -47,6 +47,17 @@ interface Props {
    * spinner/disabled state on that card's Play button to prevent double-tap.
    */
   playingEpisodeId?: string | null;
+  /**
+   * When set, the sources section is rendered inside this episode card (instead
+   * of auto-expanding on selection). Controlled by the parent so Play-button
+   * and Choose-Source paths both work.
+   */
+  openSourcesForVideoId?: string | null;
+  /**
+   * Called when the user clicks "Choose Source" / "Hide Sources" on a card.
+   * Parent updates openSourcesForVideoId accordingly.
+   */
+  onToggleSources?: (videoId: string | null) => void;
 }
 
 type SeasonKey = number | "specials" | "other";
@@ -132,23 +143,12 @@ export default function EpisodeSelector({
   onMarkSeasonWatched,
   onPlayEpisode,
   playingEpisodeId,
+  openSourcesForVideoId,
+  onToggleSources,
 }: Props) {
   const groups = useMemo(() => groupBySeason(videos), [videos]);
   const watched = watchedIds ?? new Set<string>();
   const watchedCount = videos.filter((v) => watched.has(v.id)).length;
-
-  // The selected episode's <li>, so we can keep its expanded sources visible
-  // without jumping to the bottom of the page.
-  const selectedRef = useRef<HTMLLIElement | null>(null);
-  useEffect(() => {
-    if (!selectedVideoId) return;
-    // Wait a tick so the expanded sources area has been laid out, then nudge
-    // the episode into view with block:"nearest" (scrolls the minimum amount).
-    const id = window.setTimeout(() => {
-      selectedRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }, 50);
-    return () => window.clearTimeout(id);
-  }, [selectedVideoId]);
 
   // Auto-select when there's exactly one video across all seasons.
   useEffect(() => {
@@ -277,97 +277,137 @@ export default function EpisodeSelector({
             return (
               <li
                 key={v.id}
-                ref={isSelected ? selectedRef : null}
-                className={`episode-item ${isSelected ? "episode-item--selected" : ""} ${isWatched ? "episode-item--watched" : ""}`}
+                className={`episode-item ${isWatched ? "episode-item--watched" : ""}`}
               >
-                <button
-                  type="button"
-                  className="episode-item__btn"
-                  onClick={() => onSelect(v)}
-                  aria-pressed={isSelected}
-                >
-                  <div className="episode-item__thumb">
-                    {v.thumbnail ? (
-                      <img
-                        src={v.thumbnail}
-                        alt=""
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display =
-                            "none";
-                        }}
-                      />
-                    ) : (
-                      <div className="episode-item__thumb-placeholder" aria-hidden>
-                        {episodeLabel(v)}
-                      </div>
-                    )}
-                  </div>
-                  <div className="episode-item__body">
-                    <div className="episode-item__title-row">
-                      {isWatched && (
-                        <span className="episode-item__watched-check" title="Watched">
-                          ✓
-                        </span>
-                      )}
-                      <span className="episode-item__num">{episodeLabel(v)}</span>
-                      <span className="episode-item__title">{videoTitle(v)}</span>
-                      {v.id === nextUpVideoId && !isSelected && (
-                        <span className="episode-item__nextup-badge">Next Up</span>
-                      )}
-                      {isSelected && (
-                        <span className="episode-item__selected-badge">
-                          Selected
-                        </span>
-                      )}
-                    </div>
-                    <div className="episode-item__meta muted small">
-                      {date && <span>{date}</span>}
-                      {v.runtime && (
-                        <>
-                          {date && <span className="dot">·</span>}
-                          <span>{v.runtime}</span>
-                        </>
-                      )}
-                    </div>
-                    {desc && (
-                      <div className="episode-item__desc muted small">
-                        {String(desc)}
-                      </div>
-                    )}
-                  </div>
-                </button>
-
-                <div className="episode-item__actions">
-                  {onPlayEpisode && (
-                    <button
-                      type="button"
-                      className={`episode-item__play-btn${playingEpisodeId === v.id ? " episode-item__play-btn--loading" : ""}`}
-                      onClick={(e) => { e.stopPropagation(); onPlayEpisode(v); }}
-                      disabled={playingEpisodeId === v.id}
-                      title={`Play ${videoTitle(v)}`}
-                      aria-label={`Play ${videoTitle(v)}`}
-                    >
-                      {playingEpisodeId === v.id ? (
-                        <span className="episode-item__play-spinner" aria-hidden>...</span>
+                {/* Two-column layout: thumbnail (play button) + body (select) */}
+                <div className="episode-item__row">
+                  {/* Thumbnail — click plays the episode */}
+                  <button
+                    type="button"
+                    className="episode-item__thumb-btn"
+                    onClick={(e) => { e.stopPropagation(); onPlayEpisode ? onPlayEpisode(v) : onSelect(v); }}
+                    disabled={playingEpisodeId === v.id}
+                    aria-label={`Play ${videoTitle(v)}`}
+                    title={`Play ${videoTitle(v)}`}
+                  >
+                    <div className="episode-item__thumb">
+                      {v.thumbnail ? (
+                        <img
+                          src={v.thumbnail}
+                          alt=""
+                          loading="lazy"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display =
+                              "none";
+                          }}
+                        />
                       ) : (
-                        <span aria-hidden>&#9654;</span>
+                        <div className="episode-item__thumb-placeholder" aria-hidden>
+                          {episodeLabel(v)}
+                        </div>
                       )}
-                      {playingEpisodeId === v.id ? "Loading" : "Play"}
-                    </button>
-                  )}
-                  {onToggleEpisodeWatched && (
-                    <button
-                      type="button"
-                      className="ghost-button ghost-button--xs"
-                      onClick={() => onToggleEpisodeWatched(v, !isWatched)}
-                    >
-                      {isWatched ? "Mark Episode Unwatched" : "Mark Episode Watched"}
-                    </button>
-                  )}
+                      {/* Hover play overlay */}
+                      <div className="episode-item__thumb-play" aria-hidden>
+                        {playingEpisodeId === v.id ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="none" className="episode-item__thumb-spinner">
+                            <circle cx="12" cy="12" r="10" fill="none" stroke="white" strokeWidth="2.5" strokeDasharray="31.4" strokeDashoffset="10"/>
+                          </svg>
+                        ) : (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="none">
+                            <polygon points="6 4 20 12 6 20 6 4"/>
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* Body — click selects (shows info/sources below) */}
+                  <button
+                    type="button"
+                    className="episode-item__body-btn"
+                    onClick={() => onSelect(v)}
+                  >
+                    <div className="episode-item__body">
+                      <div className="episode-item__title-row">
+                        {isWatched && (
+                          <span className="episode-item__watched-check" title="Watched">
+                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                              <polyline points="1.5 6 4.5 9 10.5 3"/>
+                            </svg>
+                          </span>
+                        )}
+                        <span className="episode-item__num">{episodeLabel(v)}</span>
+                        <span className="episode-item__title">{videoTitle(v)}</span>
+                        {v.id === nextUpVideoId && (
+                          <span className="episode-item__nextup-badge">Next Up</span>
+                        )}
+                      </div>
+                      <div className="episode-item__meta muted small">
+                        {date && <span>{date}</span>}
+                        {v.runtime && (
+                          <>
+                            {date && <span className="dot">·</span>}
+                            <span>{v.runtime}</span>
+                          </>
+                        )}
+                      </div>
+                      {desc && (
+                        <div className="episode-item__desc muted small">
+                          {String(desc)}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Compact icon action buttons — right-aligned */}
+                  <div className="episode-item__actions">
+                    {renderSelectedSources && onToggleSources && (
+                      <button
+                        type="button"
+                        className={`episode-item__icon-btn${openSourcesForVideoId === v.id ? " episode-item__icon-btn--active" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelect(v);
+                          onToggleSources(openSourcesForVideoId === v.id ? null : v.id);
+                        }}
+                        aria-label={openSourcesForVideoId === v.id ? "Hide source list" : "Choose source"}
+                        title={openSourcesForVideoId === v.id ? "Hide source list" : "Choose source"}
+                      >
+                        {/* Stacked-layers / source-list icon */}
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+                          <polyline points="2 17 12 22 22 17"/>
+                          <polyline points="2 12 12 17 22 12"/>
+                        </svg>
+                      </button>
+                    )}
+                    {onToggleEpisodeWatched && (
+                      <button
+                        type="button"
+                        className={`episode-item__icon-btn${isWatched ? " episode-item__icon-btn--watched" : ""}`}
+                        onClick={(e) => { e.stopPropagation(); onToggleEpisodeWatched(v, !isWatched); }}
+                        aria-label={isWatched ? "Mark as unwatched" : "Mark as watched"}
+                        title={isWatched ? "Mark as unwatched" : "Mark as watched"}
+                      >
+                        {isWatched ? (
+                          /* Filled check-circle */
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10" fill="currentColor" fillOpacity="0.15"/>
+                            <polyline points="9 12 11 14 15 10" strokeWidth="2.2"/>
+                            <circle cx="12" cy="12" r="10"/>
+                          </svg>
+                        ) : (
+                          /* Empty circle */
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10"/>
+                          </svg>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {isSelected && renderSelectedSources && (
+                {openSourcesForVideoId === v.id && renderSelectedSources && (
                   <div className="episode-item__sources">
                     {renderSelectedSources()}
                   </div>

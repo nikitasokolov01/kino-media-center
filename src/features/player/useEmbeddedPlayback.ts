@@ -350,6 +350,19 @@ export function useEmbeddedPlayback(): UseEmbeddedPlaybackReturn {
       progressContextRef.current = context ?? null;
       lastKnownProgressRef.current = null;
 
+      // CW fix: explicitly revive the item in Continue Watching as soon as
+      // a new play session starts. This is the ONLY place cw_dismissed is
+      // reset to 0 -- not in the periodic flush loop (which was a race condition).
+      if (context) {
+        void window.mediaCenter.progress
+          .revive({
+            profileId: context.profileId,
+            mediaId: context.mediaId,
+            playableId: context.playableId,
+          })
+          .catch(() => {}); // non-fatal
+      }
+
       stopLoop();
       lastIndexRef.current = 0;
       counters.current = {

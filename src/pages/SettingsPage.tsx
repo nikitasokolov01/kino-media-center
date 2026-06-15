@@ -7,7 +7,7 @@
 // Tab/sub mapping:
 //   ?tab=general                — Default player
 //   ?tab=addons                 — Addon manager
-//   ?tab=player&sub=embedded    — Experimental embedded player toggle
+//   ?tab=player&sub=embedded    — Built-in player (libmpv canvas) toggle
 //   ?tab=player&sub=mpv         — External MPV path + test
 //   ?tab=player&sub=sources     — Source selection / quality / CAM filter
 //   ?tab=player&sub=subtitles   — Auto-enable subtitles + language
@@ -33,7 +33,7 @@ type Tab = "general" | "addons" | "player" | "appearance" | "profiles" | "about"
 type PlayerSub = "embedded" | "mpv" | "sources" | "subtitles" | "audio";
 
 const PLAYER_SUBS: { id: PlayerSub; label: string }[] = [
-  { id: "embedded",  label: "Embedded Player" },
+  { id: "embedded",  label: "Built-in Player" },
   { id: "mpv",       label: "External MPV" },
   { id: "sources",   label: "Source Selection" },
   { id: "subtitles", label: "Subtitles" },

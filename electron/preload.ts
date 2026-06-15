@@ -73,6 +73,10 @@ const api = {
       ipcRenderer.invoke(IPC.ProgressClear, args),
     reset: (args: { profileId: number; mediaId: string; playableId: string }) =>
       ipcRenderer.invoke(IPC.ProgressReset, args),
+    revive: (args: { profileId: number; mediaId: string; playableId: string }) =>
+      ipcRenderer.invoke(IPC.ProgressRevive, args),
+    dismiss: (args: { profileId: number; mediaId: string }) =>
+      ipcRenderer.invoke(IPC.ProgressDismiss, args),
   },
   watched: {
     set: (args: {
@@ -125,6 +129,21 @@ const api = {
   system: {
     openExternal: (url: string) =>
       ipcRenderer.invoke(IPC.SystemOpenExternal, { url }),
+    getFullscreen: (): Promise<boolean> => ipcRenderer.invoke(IPC.SystemGetFullscreen),
+    setFullscreen: (value: boolean): Promise<void> => ipcRenderer.invoke(IPC.SystemSetFullscreen, value),
+    openFolder: (folderPath: string) =>
+      ipcRenderer.invoke(IPC.SystemOpenFolder, { folderPath }),
+  },
+  app: {
+    getInfo: () => ipcRenderer.invoke(IPC.AppGetInfo),
+  },
+  sourcePref: {
+    save: (args: {
+      profileId: number; type: string; mediaId: string; playableId: string;
+      addonId: string; quality: string; sourceName: string;
+    }) => ipcRenderer.invoke(IPC.SourcePrefSave, args),
+    get: (args: { profileId: number; type: string; mediaId: string; playableId: string }) =>
+      ipcRenderer.invoke(IPC.SourcePrefGet, args),
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.SettingsGet),

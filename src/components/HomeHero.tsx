@@ -41,9 +41,15 @@ const FADE_MS = 180;             // fade-out duration before swapping item
 
 interface Props {
   descriptors: CatalogDescriptor[];
+  /**
+   * When provided, the hero fetches ONLY from this catalog instead of
+   * auto-picking from the first MAX_CATALOGS_TO_FETCH. Falls back to auto
+   * mode if the catalog returns no items.
+   */
+  forcedDescriptor?: CatalogDescriptor | null;
 }
 
-export default function HomeHero({ descriptors }: Props) {
+export default function HomeHero({ descriptors, forcedDescriptor }: Props) {
   const [items, setItems] = useState<HeroItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -58,24 +64,25 @@ export default function HomeHero({ descriptors }: Props) {
   // ── Fetch hero items from the first few catalogs ───────────────────────────
 
   useEffect(() => {
-    if (descriptors.length === 0) {
+    if (descriptors.length === 0 && !forcedDescriptor) {
       setLoading(false);
       return;
     }
 
     let cancelled = false;
-    const toFetch = descriptors.slice(0, MAX_CATALOGS_TO_FETCH);
 
-    Promise.allSettled(
-      toFetch.map((d) =>
-        window.mediaCenter.catalog
-          .fetch({ manifestUrl: d.manifestUrl, type: d.type, catalogId: d.catalogId })
-          .then((res) => res.metas ?? [])
-          .catch(() => [] as StremioCatalogItem[])
-      )
-    ).then((results) => {
-      if (cancelled) return;
+    // In catalog mode, fetch ONLY the chosen descriptor (falling back to auto
+    // if it returns nothing). In auto mode, pick the first few descriptors.
+    const toFetch = forcedDescriptor
+      ? [forcedDescriptor]
+      : descriptors.slice(0, MAX_CATALOGS_TO_FETCH);
 
+    if (toFetch.length === 0) {
+      setLoading(false);
+      return;
+    }
+
+    const pickItems = (results: PromiseSettledResult<StremioCatalogItem[]>[]): HeroItem[] => {
       const seen = new Set<string>();
       const out: HeroItem[] = [];
 
@@ -108,15 +115,50 @@ export default function HomeHero({ descriptors }: Props) {
           if (out.length >= MAX_HERO_ITEMS) break;
         }
       }
+      return out;
+    };
 
-      setItems(out);
-      setLoading(false);
+    Promise.allSettled(
+      toFetch.map((d) =>
+        window.mediaCenter.catalog
+          .fetch({ manifestUrl: d.manifestUrl, type: d.type, catalogId: d.catalogId })
+          .then((res) => res.metas ?? [])
+          .catch(() => [] as StremioCatalogItem[])
+      )
+    ).then(async (results) => {
+      if (cancelled) return;
+
+      let out = pickItems(results);
+
+      // Catalog mode fallback: if the chosen catalog returned nothing, fall
+      // back to auto mode using the first few descriptors.
+      if (out.length === 0 && forcedDescriptor && descriptors.length > 0) {
+        const autoFetch = descriptors
+          .filter((d) => d.key !== forcedDescriptor.key)
+          .slice(0, MAX_CATALOGS_TO_FETCH);
+        if (autoFetch.length > 0) {
+          const fallbackResults = await Promise.allSettled(
+            autoFetch.map((d) =>
+              window.mediaCenter.catalog
+                .fetch({ manifestUrl: d.manifestUrl, type: d.type, catalogId: d.catalogId })
+                .then((res) => res.metas ?? [])
+                .catch(() => [] as StremioCatalogItem[])
+            )
+          );
+          if (!cancelled) out = pickItems(fallbackResults);
+        }
+      }
+
+      if (!cancelled) {
+        setItems(out);
+        setLoading(false);
+      }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [descriptors]);
+  }, [descriptors, forcedDescriptor]);
 
   // ── Transition helper: fade out → swap item → fade in ─────────────────────
 
@@ -172,19 +214,20 @@ export default function HomeHero({ descriptors }: Props) {
       onMouseEnter={() => { hoveredRef.current = true; }}
       onMouseLeave={() => { hoveredRef.current = false; }}
     >
-      {/* ── Background image ── */}
-      {bgUrl && (
-        <div
-          className={`home-hero__bg${transitionClass}`}
-          style={{ backgroundImage: `url("${bgUrl}")` }}
-          aria-hidden="true"
-        />
-      )}
+      {/* Visual backdrop layer: image + vignette, wrapped together so the
+           CSS mask-image on .home-hero__visual fades both to transparent
+           at the bottom. pointer-events:none so clicks pass through. */}
+      <div className="home-hero__visual" aria-hidden="true">
+        {bgUrl && (
+          <div
+            className={`home-hero__bg${transitionClass}`}
+            style={{ backgroundImage: `url("${bgUrl}")` }}
+          />
+        )}
+        <div className="home-hero__gradient" />
+      </div>
 
-      {/* ── Vignette gradient for text legibility ── */}
-      <div className="home-hero__gradient" aria-hidden="true" />
-
-      {/* ── Text content ── */}
+      {/* Text content */}
       <div className={`home-hero__content${transitionClass}`}>
         {genres && <p className="home-hero__genres">{genres}</p>}
         <h2 className="home-hero__title">{item.name}</h2>
@@ -205,7 +248,7 @@ export default function HomeHero({ descriptors }: Props) {
         </button>
       </div>
 
-      {/* ── Navigation (only rendered when there is more than one item) ── */}
+      {/* Navigation (only rendered when there is more than one item) */}
       {items.length > 1 && (
         <>
           <button

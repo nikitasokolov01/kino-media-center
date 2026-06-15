@@ -20,6 +20,8 @@ export const IPC = {
   ProgressList: "progress:list",
   ProgressClear: "progress:clear",
   ProgressReset: "progress:reset",
+  ProgressRevive: "progress:revive",
+  ProgressDismiss: "progress:dismiss",
   WatchedSet: "watched:set",
   WatchedListForMedia: "watched:list-for-media",
   LibraryAdd: "library:add",
@@ -49,6 +51,14 @@ export const IPC = {
   // Profile-scoped embedded player volume persistence
   EmbeddedGetVolume: "embedded:get-volume",
   EmbeddedSetVolume: "embedded:set-volume",
+  // Debug / About page
+  AppGetInfo: "app:get-info",
+  SystemGetFullscreen: "system:get-fullscreen",   // renderer -> main, returns boolean
+  SystemSetFullscreen: "system:set-fullscreen",   // renderer -> main, void
+  SystemOpenFolder: "system:open-folder",
+  // Source preference memory (Phase 3)
+  SourcePrefSave: "source-pref:save",
+  SourcePrefGet: "source-pref:get",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

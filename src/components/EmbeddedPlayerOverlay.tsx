@@ -45,6 +45,12 @@ import { addonSupportsResource } from "../core/stremio/meta.js";
 import { streamDedupKey } from "../core/stremio/streams.js";
 import { chooseBestSource, detectResolution } from "../core/player/sourceRanking.js";
 import { buildPlayRequest, dispatchPlayRequest } from "../features/player/playRequest.js";
+import {
+  PlayIcon, PauseIcon, SkipForwardIcon,
+  VolumeHighIcon, VolumeMidIcon, VolumeMuteIcon,
+  SubtitlesIcon, HeadphonesIcon, SlidersIcon,
+  MaximizeIcon, MinimizeIcon, XIcon, InfoIcon,
+} from "./PlayerIcons.js";
 
 // Dev flag — safe in both Vite (renderer) and plain Node.
 const isDev =
@@ -126,6 +132,9 @@ export default function EmbeddedPlayerOverlay() {
   // every fullscreen toggle instead of only when req goes null).
   const isFullscreenRef = useRef(false);
   isFullscreenRef.current = isFullscreen;
+  // Track whether the app was already fullscreen before opening the overlay.
+  // On close we only exit fullscreen if we entered it ourselves.
+  const wasFullscreenBeforeRef = useRef(false);
 
   // ---- Auto-hide controls (E6) --------------------------------------------
 
@@ -135,6 +144,8 @@ export default function EmbeddedPlayerOverlay() {
   const runningRef = useRef(false);
   const draggingRef = useRef(false);
   const isInteractingRef = useRef(false);
+  // Accumulates raw wheel delta for smooth volume control.
+  const wheelAccumulatorRef = useRef(0);
 
   // ---- Scrub bar state -----------------------------------------------------
 
@@ -176,10 +187,28 @@ export default function EmbeddedPlayerOverlay() {
   /** Key of the source currently playing (for badge). */
   const [currentSourceKey, setCurrentSourceKey] = useState<string | null>(null);
 
+  /**
+   * Player-first fetch status.
+   *  null           = not in pending-fetch mode (normal direct-URL play)
+   *  "finding"      = fetching sources from addons
+   *  "choosing"     = sources received, picking best
+   *  "error-fetch"  = fetch failed or no playable source found
+   */
+  const [fetchStatus, setFetchStatus] = useState<null | "finding" | "choosing" | "error-fetch">(null);
+  /** Error message shown when fetchStatus === "error-fetch". */
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   /** Whether the dev stats HUD is visible (hidden by default — Part 4). */
   const [statsVisible, setStatsVisible] = useState(false);
+  /** Optimistic subtitle/audio track ids: updated immediately on select change
+   *  so the dropdown reflects the choice before the 250ms poll catches up. */
+  const [optimisticSid, setOptimisticSid] = useState<number | null>(null);
+  const [optimisticAid, setOptimisticAid] = useState<number | null>(null);
   /** Temporary volume feedback text ("Volume 65%"), null when hidden. */
   const [volumeToast, setVolumeToast] = useState<string | null>(null);
+  /** Temporary track switch feedback text (e.g. "Subtitles: EN"), null when hidden. */
+  const [trackToast, setTrackToast] = useState<string | null>(null);
+  const trackToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ---- Store subscription --------------------------------------------------
 
@@ -189,12 +218,10 @@ export default function EmbeddedPlayerOverlay() {
   }, []);
 
   // ---- Exit fullscreen when overlay closes --------------------------------
-  // When req goes null (user closes overlay, next-episode transition starts,
-  // or clearEmbeddedPlayRequest() is called for any reason) we must exit
-  // BrowserWindow fullscreen so the main app is not left stuck fullscreen.
-  // Using a ref for isFullscreen avoids re-running on every fullscreen toggle.
+  // When req goes null: only exit fullscreen if the overlay entered it.
+  // If the app was already fullscreen before, leave it fullscreen.
   useEffect(() => {
-    if (req === null && isFullscreenRef.current) {
+    if (req === null && isFullscreenRef.current && !wasFullscreenBeforeRef.current) {
       void window.embeddedMpv?.setFullscreen(false);
       setIsFullscreen(false);
     }
@@ -210,6 +237,18 @@ export default function EmbeddedPlayerOverlay() {
     let cancelled = false;
 
     const doStart = async () => {
+      // 0. Record pre-play fullscreen state, then go fullscreen.
+      try {
+        const alreadyFullscreen = await window.mediaCenter.system.getFullscreen();
+        wasFullscreenBeforeRef.current = alreadyFullscreen;
+        if (!alreadyFullscreen) {
+          await window.mediaCenter.system.setFullscreen(true);
+        }
+      } catch {
+        wasFullscreenBeforeRef.current = false;
+      }
+
+      // 1. Load saved progress (always).
       let startSeconds: number | undefined;
       try {
         const saved = await window.mediaCenter.progress.get({
@@ -223,7 +262,7 @@ export default function EmbeddedPlayerOverlay() {
             console.log(
               "[embedded:resume] found saved progress:",
               startSeconds,
-              "s — will seek on file load",
+              "s -- will seek on file load",
             );
           }
         }
@@ -233,20 +272,130 @@ export default function EmbeddedPlayerOverlay() {
 
       if (cancelled) return;
 
-      // Load saved volume for this profile and apply it before starting.
+      // 2. Load saved volume (always). We store it in a local variable so
+      //    the playbackState sync effect (volumeRef.current = state.volume)
+      //    can't overwrite it before we apply it after startPlayback.
+      let pendingVolume: number | null = null;
       try {
         const savedVol = await window.embeddedMpv?.getVolume(profileId);
         if (typeof savedVol === "number") {
-          // Optimistically update local state; the actual mpv volume will be
-          // set via command() after the session starts (see below).
-          volumeRef.current = savedVol;
+          pendingVolume = savedVol;
           prevVolumeRef.current = savedVol > 0 ? savedVol : prevVolumeRef.current;
         }
       } catch {
-        // Non-fatal — fall back to mpv default.
+        // Non-fatal -- fall back to mpv default.
       }
       if (cancelled) return;
 
+      // 3. Player-first: resolve the best source inside the overlay when
+      //    the request arrives without a URL (pendingSourceFetch === true).
+      let resolvedUrl = req.streamUrl;
+      if (req.pendingSourceFetch) {
+        setFetchStatus("finding");
+        const pendingCollected: StreamSourceResult[] = [];
+        try {
+          const pendingAddons = await window.mediaCenter.addons.list(profileId);
+          const eligible = pendingAddons.filter((a) =>
+            addonSupportsResource(a.manifest, "stream", req.type),
+          );
+          const seen = new Set<string>();
+          await Promise.allSettled(
+            eligible.map((a) =>
+              window.mediaCenter.streams
+                .fetch({ manifestUrl: a.manifestUrl, type: req.type, id: req.playableId })
+                .then((res) => {
+                  ((res.streams ?? []) as StremioStream[]).forEach((s, i) => {
+                    const key = streamDedupKey(s, `${a.id}#${i}`);
+                    if (!seen.has(key)) {
+                      seen.add(key);
+                      pendingCollected.push({
+                        stream: s,
+                        source: { addonId: a.id, addonName: a.manifest.name },
+                        key,
+                      });
+                    }
+                  });
+                })
+                .catch(() => {}),
+            ),
+          );
+          if (cancelled) return;
+          if (pendingCollected.length === 0) {
+            setFetchStatus("error-fetch");
+            setFetchError("No sources found. Try choosing a source manually.");
+            return;
+          }
+          setFetchStatus("choosing");
+          // Apply saved source pref ordering.
+          let ordered = [...pendingCollected];
+          try {
+            const pref = await window.mediaCenter.sourcePref.get({
+              profileId,
+              type: req.type,
+              mediaId: req.mediaId,
+              playableId: req.playableId,
+            });
+            if (pref && !cancelled) {
+              const prefIdx = ordered.findIndex(
+                (r) =>
+                  r.source.addonId === pref.addonId &&
+                  (pref.quality === "" || (r.stream.name ?? "").includes(pref.quality)) &&
+                  (pref.sourceName === "" ||
+                    (r.stream.name ?? "")
+                      .toLowerCase()
+                      .includes(pref.sourceName.slice(0, 6).toLowerCase())),
+              );
+              if (prefIdx > 0) {
+                const [match] = ordered.splice(prefIdx, 1);
+                ordered = [match, ...ordered];
+              }
+            }
+          } catch {
+            // Pref lookup failure is non-fatal.
+          }
+          if (cancelled) return;
+          // Populate source panel so "Choose Source" works without re-fetching.
+          setOverlayResults(ordered);
+
+          // Manual source mode: show picker, wait for user selection.
+          if (req.manualSourceSelect) {
+            setFetchStatus(null);
+            setSourcePanelOpen(true);
+            return;
+          }
+
+          const best = chooseBestSource(ordered, settings);
+          if (!best?.stream.url) {
+            setFetchStatus("error-fetch");
+            setFetchError("No playable source found. Try choosing a source manually.");
+            return;
+          }
+          resolvedUrl = best.stream.url;
+          setCurrentSourceKey(best.key);
+          // Persist this source as the preferred one for next time.
+          void window.mediaCenter.sourcePref
+            .save({
+              profileId,
+              type: req.type,
+              mediaId: req.mediaId,
+              playableId: req.playableId,
+              addonId: best.source.addonId,
+              quality: detectResolution(best.stream.name ?? ""),
+              sourceName: best.stream.name ?? "",
+            })
+            .catch(() => {});
+        } catch (err) {
+          if (!cancelled) {
+            setFetchStatus("error-fetch");
+            setFetchError(err instanceof Error ? err.message : "Failed to load sources.");
+          }
+          return;
+        }
+        if (cancelled) return;
+        setFetchStatus(null);
+      }
+
+      // 4. Build progress context + start playback.
       const ctx: EmbeddedProgressContext = {
         profileId,
         type: req.type,
@@ -261,10 +410,14 @@ export default function EmbeddedPlayerOverlay() {
         startSeconds,
       };
 
-      await startPlayback(req.streamUrl, ctx);
+      await startPlayback(resolvedUrl, ctx);
       // Apply saved volume after session starts (mpv resets to 100 on start).
-      if (!cancelled && typeof volumeRef.current === "number") {
-        void window.embeddedMpv?.command("volume", volumeRef.current).catch(() => {});
+      // We use pendingVolume (the local var) rather than volumeRef.current because
+      // the playbackState sync effect may have overwritten volumeRef during
+      // startPlayback (MPV reports 100 before our command arrives).
+      if (!cancelled && pendingVolume !== null) {
+        volumeRef.current = pendingVolume;
+        void window.embeddedMpv?.command("volume", pendingVolume).catch(() => {});
       }
     };
 
@@ -376,13 +529,93 @@ export default function EmbeddedPlayerOverlay() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [req, profileId]);
 
-  // ---- Reset source picker when the episode/movie changes ----------------
+  // ---- Reset source picker + fetch state when the episode/movie changes ----
   useEffect(() => {
     setSourcePanelOpen(false);
     setOverlayResults(null);
     setOverlayFetchError(null);
     setCurrentSourceKey(null);
+    setFetchStatus(null);
+    setFetchError(null);
+    setOptimisticSid(null);
+    setOptimisticAid(null);
   }, [req?.playableId]);
+
+  // ---- Apply subtitle/audio preferences once when tracks first arrive ------
+  //
+  // External MPV gets subtitle/audio settings via CLI args (--slang, --alang,
+  // --no-sub). The embedded player must apply them via IPC after tracks load.
+  // This effect fires every time the track lists change, but the actual
+  // commands are sent only ONCE per playable (tracked via ref) so that user
+  // manual selections are never overridden.
+  //
+  // Priority:
+  //   1. If autoEnableSubtitles === false: disable subtitles (sid = -1).
+  //   2. If autoEnableSubtitles === true:  find best track by language pref.
+  //   3. Audio: find best track by audioLanguage (or animeAudioLanguage).
+  const prefsAppliedRef = useRef(false);
+
+  // Reset the applied flag whenever the playable changes.
+  useEffect(() => {
+    prefsAppliedRef.current = false;
+  }, [req?.playableId]);
+
+  useEffect(() => {
+    // Only fire after tracks load AND running AND not yet applied for this req.
+    if (!running || prefsAppliedRef.current) return;
+    const hasSubs = subtitleTracks.length > 0;
+    const hasAudio = audioTracks.length > 0;
+    if (!hasSubs && !hasAudio) return; // tracks not yet available
+
+    prefsAppliedRef.current = true; // mark before sending to avoid double-fire
+
+    const isAnimeContent = req?.isAnime ?? false;
+
+    // ── Subtitle preference ──
+    if (hasSubs) {
+      if (!settings.autoEnableSubtitles) {
+        // User wants subtitles off — disable them.
+        setSubtitleTrack(-1);
+        setOptimisticSid(-1);
+        if (isDev) console.log("[prefs] subtitles disabled (autoEnableSubtitles=false)");
+      } else if (settings.subtitleLanguage) {
+        const lang = settings.subtitleLanguage.toLowerCase();
+        // Find a track whose lang or title matches the preference.
+        const best = subtitleTracks.find((t) => {
+          const tl = (t.lang ?? "").toLowerCase();
+          const tt = (t.title ?? "").toLowerCase();
+          return tl.startsWith(lang) || lang.startsWith(tl.slice(0, 2)) || tt.includes(lang);
+        });
+        if (best) {
+          setSubtitleTrack(best.id);
+          setOptimisticSid(best.id);
+          if (isDev) console.log("[prefs] subtitle track selected:", best.lang, best.id);
+        }
+        // If no matching track found, leave mpv's default selection.
+      }
+    }
+
+    // ── Audio preference ──
+    if (hasAudio && audioTracks.length > 1) {
+      const rawLang = isAnimeContent
+        ? (settings.animeAudioLanguage || settings.audioLanguage)
+        : settings.audioLanguage;
+      const lang = rawLang?.toLowerCase() ?? "";
+      if (lang && lang !== "auto" && lang !== "original") {
+        const best = audioTracks.find((t) => {
+          const tl = (t.lang ?? "").toLowerCase();
+          const tt = (t.title ?? "").toLowerCase();
+          return tl.startsWith(lang) || lang.startsWith(tl.slice(0, 2)) || tt.includes(lang);
+        });
+        if (best) {
+          setAudioTrack(best.id);
+          setOptimisticAid(best.id);
+          if (isDev) console.log("[prefs] audio track selected:", best.lang, best.id);
+        }
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, subtitleTracks, audioTracks]);
 
   // ---- E8: Show/hide next episode prompt based on remaining time -----------
 
@@ -456,6 +689,7 @@ export default function EmbeddedPlayerOverlay() {
         streamUrl: result.stream.url ?? "",
         streamTitle: result.stream.title,
         streamName: result.stream.name,
+        pendingSourceFetch: false,
       };
       setEmbeddedPlayRequest(newReq);
     },
@@ -605,6 +839,7 @@ export default function EmbeddedPlayerOverlay() {
     if (volumeToastTimerRef.current !== null) clearTimeout(volumeToastTimerRef.current);
     if (saveVolumeTimerRef.current !== null) clearTimeout(saveVolumeTimerRef.current);
     if (dblClickTimerRef.current !== null) clearTimeout(dblClickTimerRef.current);
+    if (trackToastTimerRef.current !== null) clearTimeout(trackToastTimerRef.current);
   }, []);
 
   // ---- Mouse wheel → volume -----------------------------------------------
@@ -618,8 +853,13 @@ export default function EmbeddedPlayerOverlay() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "SELECT") return;
       e.preventDefault(); // suppress page scroll
-      const delta = e.deltaY < 0 ? 5 : -5; // scroll up = louder
-      const next = Math.min(130, Math.max(0, volumeRef.current + delta));
+      // Smooth accumulator: 60px of scroll = 1% volume step, cap 3%/event.
+      wheelAccumulatorRef.current += -e.deltaY;
+      const rawSteps = Math.trunc(wheelAccumulatorRef.current / 60);
+      const steps = Math.max(-3, Math.min(3, rawSteps));
+      if (steps === 0) return;
+      wheelAccumulatorRef.current -= steps * 60;
+      const next = Math.min(100, Math.max(0, volumeRef.current + steps));
       setVolume(next);
       showControls();
       showVolumeToast(next);
@@ -781,15 +1021,48 @@ export default function EmbeddedPlayerOverlay() {
     showControls, showNextEpPrompt, nextSource, transitioning, handleNextEpisode,
   ]);
 
+  // ---- Track toast helper -------------------------------------------------
+
+  const showTrackToast = useCallback((msg: string) => {
+    setTrackToast(msg);
+    if (trackToastTimerRef.current !== null) clearTimeout(trackToastTimerRef.current);
+    trackToastTimerRef.current = setTimeout(() => {
+      setTrackToast(null);
+      trackToastTimerRef.current = null;
+    }, 1800);
+  }, []);
+
   // ---- Track select handlers -----------------------------------------------
 
   const handleSubtitleChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => setSubtitleTrack(Number(e.target.value)),
-    [setSubtitleTrack],
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const id = Number(e.target.value);
+      setOptimisticSid(id);
+      setSubtitleTrack(id);
+      if (id === -1) {
+        showTrackToast("Subtitles off");
+      } else {
+        const track = subtitleTracks.find((t) => t.id === id);
+        const label = track
+          ? [track.lang?.toUpperCase(), track.title].filter(Boolean).join(" ") || `Track ${id}`
+          : `Track ${id}`;
+        showTrackToast(`Subtitles: ${label}`);
+      }
+    },
+    [setSubtitleTrack, subtitleTracks, showTrackToast],
   );
   const handleAudioChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => setAudioTrack(Number(e.target.value)),
-    [setAudioTrack],
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const id = Number(e.target.value);
+      setOptimisticAid(id);
+      setAudioTrack(id);
+      const track = audioTracks.find((t) => t.id === id);
+      const label = track
+        ? [track.lang?.toUpperCase(), track.title].filter(Boolean).join(" ") || `Track ${id}`
+        : `Track ${id}`;
+      showTrackToast(`Audio: ${label}`);
+    },
+    [setAudioTrack, audioTracks, showTrackToast],
   );
 
   // ---- Progress bar --------------------------------------------------------
@@ -827,8 +1100,11 @@ export default function EmbeddedPlayerOverlay() {
 
   // ---- Derived display values ---------------------------------------------
 
-  const selectedSid = subtitleTracks.find((t) => t.selected)?.id ?? -1;
-  const selectedAid = audioTracks.find((t) => t.selected)?.id ?? -1;
+  const polledSid = subtitleTracks.find((t) => t.selected)?.id ?? -1;
+  const polledAid = audioTracks.find((t) => t.selected)?.id ?? -1;
+  // Use optimistic value immediately; polled value as fallback when no pending change.
+  const selectedSid = optimisticSid !== null ? optimisticSid : polledSid;
+  const selectedAid = optimisticAid !== null ? optimisticAid : polledAid;
 
   const title =
     req && req.mediaId !== "experimental"
@@ -837,15 +1113,40 @@ export default function EmbeddedPlayerOverlay() {
         : req.mediaTitle
       : "(experimental URL)";
 
-  const statusText = starting
-    ? "Starting…"
-    : !running && !error
-      ? "Idle"
-      : error
-        ? "Error"
-        : paused
-          ? "Paused"
-          : "Playing";
+  // Per-phase loading text shown in the spinner.
+  const loadingText =
+    fetchStatus === "finding"
+      ? "Finding sources…"
+      : fetchStatus === "choosing"
+        ? "Choosing source…"
+        : starting
+          ? "Starting player…"
+          : !running && !error
+            ? "Loading source…"
+            : "Loading…";
+
+  // Show spinner whenever we are NOT yet in steady-state (playing / paused / error).
+  // Covers: source-resolution phases, native MPV start, and waiting for first frame.
+  const showLoadingIndicator =
+    fetchStatus === "finding" ||
+    fetchStatus === "choosing" ||
+    starting ||
+    (!running && !error && fetchStatus !== "error-fetch");
+
+  const statusText =
+    fetchStatus === "finding"
+      ? "Finding sources…"
+      : fetchStatus === "choosing"
+        ? "Choosing source…"
+        : error
+          ? "Error"
+          : starting
+            ? "Starting player…"
+            : !running
+              ? "Loading source…"
+              : paused
+                ? "Paused"
+                : "Playing";
 
   // ---- Render --------------------------------------------------------------
 
@@ -883,9 +1184,6 @@ export default function EmbeddedPlayerOverlay() {
     return tier === "unknown" || tier === "cam" ? null : tier;
   };
 
-  // Mute icon based on volume level.
-  const muteIcon = volume === 0 ? "🔇" : volume < 50 ? "🔉" : "🔊";
-
   // Next-episode skip button: only shown when a next episode is available.
   const hasNextEp = !!nextEpisode;
 
@@ -905,17 +1203,53 @@ export default function EmbeddedPlayerOverlay() {
       >
         <canvas ref={canvasRef} className="emb-overlay__canvas" />
 
-        {/* ── Loading spinner ── */}
-        {starting && (
+        {/* Loading indicator: visible during ALL pre-ready phases
+             (source resolution, native start, waiting for first frame). */}
+        {showLoadingIndicator && (
           <div className="emb-overlay__loading-indicator">
             <div className="emb-overlay__spinner" />
-            <span>Starting…</span>
+            <span className="emb-overlay__loading-text">{loadingText}</span>
           </div>
         )}
 
         {/* ── Error banners + recovery actions ── */}
-        {(!available || error) && (
+        {(!available || error || fetchStatus === "error-fetch") && (
           <div className="emb-overlay__errors">
+            {/* Fetch error panel (player-first: source resolution failed) */}
+            {fetchStatus === "error-fetch" && !error && (
+              <div className="emb-overlay__error-panel" role="alert">
+                <div className="emb-overlay__error-message">
+                  {fetchError ?? "Failed to load sources."}
+                </div>
+                <div className="emb-overlay__error-actions">
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn emb-overlay__err-btn--primary"
+                    onClick={() => {
+                      setFetchStatus(null);
+                      setFetchError(null);
+                      void openSourcePanel();
+                    }}
+                  >
+                    Choose Source
+                  </button>
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn"
+                    onClick={handleRetry}
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn"
+                    onClick={handleClose}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
             {!available && (
               <div className="emb-overlay__error-panel" role="alert">
                 <div className="emb-overlay__error-message">
@@ -946,9 +1280,31 @@ export default function EmbeddedPlayerOverlay() {
               <div className="emb-overlay__error-panel" role="alert">
                 <div className="emb-overlay__error-message">{error}</div>
                 <div className="emb-overlay__error-actions">
+                  {/* Try next source when multiple were fetched (player-first) */}
+                  {(() => {
+                    const nextBest = (overlayResults ?? []).find(
+                      (r) => r.key !== currentSourceKey && r.stream.url,
+                    );
+                    return nextBest ? (
+                      <button
+                        type="button"
+                        className="emb-overlay__err-btn emb-overlay__err-btn--primary"
+                        onClick={() => handleOverlaySourceSelect(nextBest)}
+                      >
+                        Try next source
+                      </button>
+                    ) : null;
+                  })()}
                   <button
                     type="button"
                     className="emb-overlay__err-btn emb-overlay__err-btn--primary"
+                    onClick={() => { void openSourcePanel(); }}
+                  >
+                    Choose Source
+                  </button>
+                  <button
+                    type="button"
+                    className="emb-overlay__err-btn"
                     onClick={handleRetry}
                   >
                     Retry
@@ -989,7 +1345,7 @@ export default function EmbeddedPlayerOverlay() {
               title="Toggle performance stats"
               aria-label="Toggle performance stats"
             >
-              ⓘ
+              <InfoIcon size={16} />
             </button>
             <button
               type="button"
@@ -1000,7 +1356,7 @@ export default function EmbeddedPlayerOverlay() {
               onMouseEnter={pinControls}
               onMouseLeave={unpinControls}
             >
-              ✕
+              <XIcon size={18} />
             </button>
           </div>
         </div>
@@ -1021,6 +1377,13 @@ export default function EmbeddedPlayerOverlay() {
           </div>
         )}
 
+        {/* ── Track toast (subtitle/audio switch feedback) ── */}
+        {trackToast && (
+          <div className="emb-overlay__track-toast" aria-live="polite">
+            {trackToast}
+          </div>
+        )}
+
         {/* ── Next Episode prompt (bottom-right, above controls) ── */}
         {showNextEpPrompt && nextEpButtonLabel && (
           <div
@@ -1037,7 +1400,7 @@ export default function EmbeddedPlayerOverlay() {
             >
               {transitioning ? "Starting…"
                 : nextSourceLoading ? "Preparing…"
-                : `Up Next ▶ ${nextEpButtonLabel}`}
+                : <><SkipForwardIcon size={13} style={{verticalAlign:"middle",marginRight:5}} />{"Up Next: " + nextEpButtonLabel}</>}
             </button>
           </div>
         )}
@@ -1058,7 +1421,7 @@ export default function EmbeddedPlayerOverlay() {
                 onClick={() => setSourcePanelOpen(false)}
                 aria-label="Close source panel"
               >
-                ✕
+                <XIcon size={16} />
               </button>
             </div>
             {overlayLoading && (
@@ -1175,7 +1538,7 @@ export default function EmbeddedPlayerOverlay() {
                   aria-label={paused ? "Play" : "Pause"}
                   disabled={starting}
                 >
-                  {paused ? "▶" : "⏸"}
+                  {paused ? <PlayIcon size={20} /> : <PauseIcon size={20} />}
                 </button>
 
                 {/* Next Episode (only if available) */}
@@ -1188,11 +1551,11 @@ export default function EmbeddedPlayerOverlay() {
                     title="Next episode (N)"
                     aria-label="Next episode"
                   >
-                    ⏭
+                    <SkipForwardIcon size={16} />
                   </button>
                 )}
 
-                {/* Mute toggle */}
+                            {/* Mute toggle */}
                 <button
                   type="button"
                   className="emb-overlay__ctrl emb-overlay__ctrl--icon"
@@ -1205,7 +1568,11 @@ export default function EmbeddedPlayerOverlay() {
                   title="Mute/unmute (M)"
                   aria-label={volume === 0 ? "Unmute" : "Mute"}
                 >
-                  {muteIcon}
+                  {volume === 0
+                    ? <VolumeMuteIcon size={18} />
+                    : volume < 50
+                      ? <VolumeMidIcon size={18} />
+                      : <VolumeHighIcon size={18} />}
                 </button>
 
                 {/* Volume slider */}
@@ -1233,7 +1600,9 @@ export default function EmbeddedPlayerOverlay() {
                 {/* Subtitle track */}
                 {subtitleTracks.length > 0 ? (
                   <div className="emb-overlay__track-wrap" title="Subtitles">
-                    <span className="emb-overlay__track-icon">CC</span>
+                    <span className="emb-overlay__track-icon">
+                      <SubtitlesIcon size={14} />
+                    </span>
                     <select
                       className="emb-overlay__track-select"
                       value={selectedSid}
@@ -1253,7 +1622,9 @@ export default function EmbeddedPlayerOverlay() {
                 {/* Audio track */}
                 {audioTracks.length > 1 ? (
                   <div className="emb-overlay__track-wrap" title="Audio">
-                    <span className="emb-overlay__track-icon">♪</span>
+                    <span className="emb-overlay__track-icon">
+                      <HeadphonesIcon size={14} />
+                    </span>
                     <select
                       className="emb-overlay__track-select"
                       value={selectedAid}
@@ -1282,7 +1653,7 @@ export default function EmbeddedPlayerOverlay() {
                   onMouseEnter={pinControls}
                   onMouseLeave={unpinControls}
                 >
-                  ⚙
+                  <SlidersIcon size={16} />
                 </button>
 
                 {/* Fullscreen */}
@@ -1294,20 +1665,10 @@ export default function EmbeddedPlayerOverlay() {
                     title={isFullscreen ? "Exit fullscreen (Esc)" : "Fullscreen (F)"}
                     aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
                   >
-                    {isFullscreen ? "⤡" : "⤢"}
+                    {isFullscreen ? <MinimizeIcon size={16} /> : <MaximizeIcon size={16} />}
                   </button>
                 )}
 
-                {/* Stop / close */}
-                <button
-                  type="button"
-                  className="emb-overlay__ctrl emb-overlay__ctrl--stop"
-                  onClick={handleClose}
-                  title="Stop and close (Esc)"
-                  aria-label="Stop"
-                >
-                  ⏹
-                </button>
               </div>
             </div>
           </div>

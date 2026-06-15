@@ -82,6 +82,46 @@ export const BUILT_IN_THEMES: BuiltInTheme[] = [
       text: "#f8fbff",
     },
   },
+  {
+    id: "emerald-noir",
+    label: "Emerald Noir",
+    preview: {
+      bg: "#060d0c",
+      sidebar: "#0a1512",
+      accent: "#34d399",
+      text: "#e6fff8",
+    },
+  },
+  {
+    id: "amber-theater",
+    label: "Amber Theater",
+    preview: {
+      bg: "#0e0b06",
+      sidebar: "#1a1408",
+      accent: "#f59e0b",
+      text: "#fff8e6",
+    },
+  },
+  {
+    id: "arctic-blue",
+    label: "Arctic Blue",
+    preview: {
+      bg: "#070c14",
+      sidebar: "#0e1622",
+      accent: "#60c8ff",
+      text: "#e8f4ff",
+    },
+  },
+  {
+    id: "royal-violet",
+    label: "Royal Violet",
+    preview: {
+      bg: "#0a0814",
+      sidebar: "#130f22",
+      accent: "#c084fc",
+      text: "#f3e8ff",
+    },
+  },
 ];
 
 /** Preset accent colours the user can pick from. */

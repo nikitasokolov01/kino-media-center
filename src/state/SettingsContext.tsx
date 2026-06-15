@@ -42,8 +42,17 @@ const FALLBACK: AppSettings = {
   customCss: "",
   posterRadius: "soft",
   backgroundStyle: "",
+  bgGradientColorA: "#0a0d14",
+  bgGradientColorB: "#111520",
+  bgGradientAngle: 135,
   customBackgroundColor: "",
   customBackgroundGradient: "",
+  customThemes: "[]",
+  activeCustomThemeId: "",
+  heroSourceMode: "auto",
+  heroAddonId: "",
+  heroCatalogType: "",
+  heroCatalogId: "",
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);

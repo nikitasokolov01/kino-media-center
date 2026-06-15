@@ -17,6 +17,9 @@ state, Continue Watching, MPV JSON-IPC watch-progress tracking, theme system
 (dark/OLED/purple/blue/red/neon-midnight + custom accent + custom CSS), custom themed
 scrollbars, a rotating widescreen hero banner on the Home page, and a
 tabbed Settings hub (left-nav sidebar, URL-driven via search params).
+custom Theme Builder (user-defined named colour presets, fully authoritative
+over built-in themes), and a player-first loading flow for the embedded player
+(overlay opens immediately on Play, fetches sources internally).
 
 **Active branch `experiment/libmpv-native`** also has an experimental embedded
 libmpv canvas player (gated behind `experimentalEmbeddedPlayer` flag). External
@@ -66,7 +69,10 @@ MPV remains the default/fallback. See section 10 and handoff doc for details.
   EpisodeSelector, SourcesSection, StreamCard, ProfileAvatar, SearchBox,
   **HomeHero** (rotating banner, see section 12),
   **TopNav** (floating top navigation bar — brand, nav links, search, gear, profile pill),
-  **AddonManager** (shared addon install/list UI used by AddonsPage + AddonsSettings), etc.
+  **LibraryRecentRow** (recently-added strip on Home, see section 3),
+  **AddonManager** (shared addon install/list UI used by AddonsPage + AddonsSettings),
+  **PlayerIcons** (`src/components/PlayerIcons.tsx` -- 15 inline SVG icon components used by
+  the embedded player overlay; Feather-style, 24x24 viewBox, `size`/`className`/`style` props), etc.
 - `src/types/` — preload/electron type declarations (`window.mediaCenter`,
   `window.electronAPI`). Note: multiple `.d.ts` files declare `electronAPI`
   (verify in code before editing typings).
@@ -76,7 +82,9 @@ MPV remains the default/fallback. See section 10 and handoff doc for details.
 `profiles` (id, name, color, emoji), `addons` (per profile), `watch_progress`
 (per profile + media + playable; has `completed`), `app_settings` (global
 key/value: defaultPlayer, mpvPath, **themeId**, **accentColor**, **customCss**,
-embeddedVol:<profileId>, …), `library_items` (per profile),
+**customThemes**, **activeCustomThemeId**, embeddedVol:<profileId>, …),
+`library_items` (per profile), `source_prefs` (per profile+type+media+episode;
+stores addonId, quality, sourceName of last played source -- no URLs stored),
 `series_episodes` (global cached ordered episode list per series, drives
 Continue Watching "next episode"). DB lives in Electron `userData`.
 
@@ -101,6 +109,14 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
   immediately (respects `autoPlayBestSource` / `experimentalEmbeddedPlayer` settings).
 - **Inline episode sources** — for series, the source picker renders inside the
   selected episode card (not at page bottom); auto-scrolls into view.
+- **Episode card redesign** — thumbnail area is a standalone `<button>` that triggers
+  play; hover shows a play-triangle overlay with scale + brightness on the thumbnail.
+  Body text area is a separate click target for selecting (shows info, sources in-panel).
+  Compact "Sources" and "Watched" ghost buttons in a right-aligned column. No text Play button.
+- **Series/movie Play/Resume header button** — `media-detail__actions` always shows a
+  primary Play/Resume button. Movies: "Resume HH:MM (NN%)" when progress exists; auto-fetches
+  best source or reveals source picker. Series: targets best episode (in-progress > next-up >
+  first episode); "Resume SxEy HH:MM" or "Play Next SxEy" label.
 - **Stream source picker** — cards with quality/codec/HDR/size detection,
   expandable raw details, dedup.
 - **MPV external playback** — primary for direct HTTP/HTTPS URLs.
@@ -114,10 +130,21 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
   `watch_progress.completed`.
 - **Right-click context menus** — custom popover on poster cards (Open Details,
   Add/Remove Library; Continue Watching adds Reset Progress / Remove from CW).
+- **Continue Watching dismissal (fixed)** — "Remove from CW" sets `cw_dismissed=1`.
+  `listWatchProgress` filters `AND cw_dismissed=0`. A separate `progress:revive` IPC
+  resets `cw_dismissed=0` exactly once when playback genuinely starts (embedded player
+  `startPlayback`, external MPV IPC `connect()`, browser player `isReady`). The periodic
+  save loop never touches `cw_dismissed` — eliminates the race condition where the first
+  progress poll could re-enable a just-dismissed item.
 - **Series next-episode behavior** + **Season 0 specials ignored** for auto
   Next Up / Continue Watching.
 - **Library badges** — not started / watching / watched.
 - **Browser player** — secondary HTML5 + hls.js player (PlayerPage).
+- **Embedded player UI polish** -- all emoji/Unicode symbols replaced with SVG icons
+  (`PlayerIcons.tsx`); subtitle/audio dropdowns themed via CSS vars (`--color-bg-elevated`,
+  `--color-text`, `color-scheme: dark`); optimistic track selection (dropdown reflects change
+  immediately, no 250ms wait); scroll-wheel volume: 2%/notch, clamped 0-100 (slider still
+  allows 0-130 via drag).
 - **Experimental embedded MPV overlay** (branch `experiment/libmpv-native`, gated
   behind `experimentalEmbeddedPlayer` flag): libmpv renders frames offscreen via
   ANGLE EGL, copies RGBA pixels to a `<canvas>` in a full-screen overlay. Supports
@@ -137,6 +164,36 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
 - **Poster roundness** — `--poster-radius` CSS variable is applied to wrapper
   elements (`.catalog-item__poster-wrap`, `.cw-card__poster-wrap`, `.media-detail__poster`)
   which have `overflow: hidden`. Controlled by Settings -> Appearance -> Poster Roundness.
+- **Library Recent Row** (Home) — `src/components/LibraryRecentRow.tsx` renders a
+  horizontal scroll strip of recently-added library items (up to 20, newest first)
+  between Continue Watching and catalog rows. Uses `useLibrary()` context; zero extra
+  IPC. Hidden when library is empty. Each card shows a type badge (movie/series).
+- **Source fallback / Try Next Source** — `SourcesSection` now tracks
+  `currentSourceKey` and computes `nextBestResult` (second-ranked source). A
+  'Next Source' button appears in the play bar once a source is playing. An inline
+  'Try Next Source' button appears inside error banners. Uses generic
+  `handlePlaySource(result)` — `handlePlayBest` delegates to it.
+- **Theme export/import** — Settings > Appearance has Export (JSON download) and
+  Import (file picker) for `themeId`, `accentColor`, `posterRadius`, `backgroundStyle`,
+  `customBackgroundColor`. `customCss` excluded from export for safety. Import
+  validates shape and known themeIds before applying. 'Copy example CSS' button
+  copies a minimal custom CSS snippet to clipboard.
+- **Custom Theme Builder** -- Settings > Appearance > Custom theme builder: color
+  pickers for 11 CSS vars (bg, bg-elevated, surface, surface-hover, border, text,
+  text-muted, accent, accent-hover, success, danger). Live preview. Named presets
+  saved in `customThemes` JSON. When a custom theme is active (`activeCustomThemeId`
+  set), ThemeProvider Effects 2 and 4 skip built-in accent/background overrides so
+  the custom theme is fully authoritative. AppearanceSettings shows an 'active' banner
+  and disables Theme/Accent/Background controls with opacity+pointer-events.
+- **Library filters, sort, search** — LibraryPage has filter tabs (All / Movies /
+  Series / Watched / In Progress / Unwatched), sort (Recently Added / A-Z / Release
+  Year), and a live search input. All computed client-side via `useMemo`; no new IPC.
+  Filtered item count shown in page header.
+- **Settings > About / Debug** — AboutSettings shows app version, dev mode,
+  profile, player settings, and all key paths (userData, DB, native addon dir,
+  libmpv/libEGL/libGLES). Buttons: Clear Home cache (in-renderer), Open userData
+  folder (`system.openFolder` IPC), Copy debug info (clipboard; no source URLs).
+  Uses `app:get-info` and `system:open-folder` IPC channels (4-layer each).
 
 ## 4. Important Architecture Rules
 
@@ -171,8 +228,11 @@ Continue Watching "next episode"). DB lives in Electron `userData`.
   MPV (`backend: "external-mpv"`) is the default for direct URLs and must not
   be changed unless explicitly requested.
 - The `PlayRequest` type in `src/core/player/types.ts` carries a `backend` field
-  that routes to the correct player. `dispatchPlayRequest` in
-  `src/features/player/playRequest.ts` is the single dispatch point.
+  that routes to the correct player, and an optional `pendingSourceFetch?: boolean`
+  flag for the player-first flow (overlay opens immediately; source resolved inside).
+  `dispatchPlayRequest` in `src/features/player/playRequest.ts` is the single
+  dispatch point for external-MPV; `setEmbeddedPlayRequest` in `embeddedRequest.ts`
+  is used for the embedded player (both normal and player-first pending requests).
 - Embedded addon controls (pause/seek/volume/tracks) are sent via an mpsc channel
   to the render thread via `window.embeddedMpv.command(type, value)`. State is
   polled via `window.embeddedMpv.getState()` every 250 ms while running.
@@ -344,6 +404,35 @@ fallback button.
 **No other changes**: source ranking, profiles, library, progress tracking, Continue
 Watching, and external MPV IPC are all untouched.
 
+### E9 Player-first loading flow (same branch)
+
+**Goal**: Open the embedded overlay immediately on Play click; source resolution
+happens inside the overlay, not before it opens.
+
+**`PlayRequest.pendingSourceFetch?: boolean`** (in `src/core/player/types.ts`):
+- When `true`: overlay opens with `streamUrl: ""` and fetches sources internally.
+- When `false` or absent: existing direct-URL flow (unchanged).
+
+**`EmbeddedPlayerOverlay.tsx`** changes:
+- New state: `fetchStatus: null | "finding" | "choosing" | "error-fetch"`, `fetchError`.
+- `doStart` (effect triggered by `req` change): when `pendingSourceFetch === true`,
+  runs status phases ("Finding sources..." -> "Choosing best source..."), applies
+  saved source-pref ordering, calls `chooseBestSource`, saves pref, then
+  calls `startPlayback(resolvedUrl, ctx)`. Direct-URL path unchanged.
+- Fetch-error panel: Choose Source / Retry / Close.
+- Playback error panel: added "Try next source" + "Choose Source" buttons.
+- `handleOverlaySourceSelect`: adds `pendingSourceFetch: false` to prevent re-triggering.
+
+**`src/components/SourcesSection.tsx`** -- `handlePlayBest`:
+- When `settings.experimentalEmbeddedPlayer && selected`: dispatches
+  `setEmbeddedPlayRequest({ ..., streamUrl: "", pendingSourceFetch: true })` immediately.
+  Returns without fetching sources in SourcesSection (overlay handles it).
+- External MPV path fully unchanged.
+
+**`src/pages/MediaPage.tsx`** -- `handleDirectPlayEpisode`:
+- When embedded player ON: dispatches pending request immediately and returns.
+  Overlay opens and fetches episode streams itself.
+
 ### Known limitations / TODO
 - No subtitle auto-loading from addons/OpenSubtitles (only mpv's loaded tracks).
 - No pause/seek keyboard IPC for the standalone test page (only overlay has it).
@@ -430,6 +519,10 @@ Settings → Appearance section. Changes apply immediately without restart.
 | `blue` | Blue (#090d14 bg, #4d9fff accent) |
 | `red` | Red (#130b0b bg, #ff6b6b accent) |
 | `neon-midnight` | Neon Midnight (#050713 bg, #38bdf8 cyan accent) |
+| `emerald-noir` | Emerald Noir (#060d0c bg, #34d399 green accent) |
+| `amber-theater` | Amber Theater (#0e0b06 bg, #f59e0b amber accent) |
+| `arctic-blue` | Arctic Blue (#070c14 bg, #60c8ff icy-blue accent) |
+| `royal-violet` | Royal Violet (#0a0814 bg, #c084fc violet accent) |
 
 ### AppSettings fields
 
@@ -440,6 +533,13 @@ Settings → Appearance section. Changes apply immediately without restart.
 - `backgroundStyle: string` -- stored as `"backgroundStyle"`. Values: ""/"oled-black"/"subtle-gradient"/"neon-gradient"/"custom-solid".
 - `customBackgroundColor: string` -- stored as `"customBackgroundColor"`. Hex color for custom-solid bg.
 - `customBackgroundGradient: string` -- stored as `"customBackgroundGradient"`. Reserved for future use.
+- `bgGradientColorA: string` -- stored as `"bgGradientColorA"`. Gradient start color hex. Default "#0a0d14".
+- `bgGradientColorB: string` -- stored as `"bgGradientColorB"`. Gradient end color hex. Default "#111520".
+- `bgGradientAngle: number` -- stored as `"bgGradientAngle"`. Gradient angle in degrees. Default 135.
+- `heroSourceMode: "auto" | "catalog"` -- stored as `"heroSourceMode"`. Controls which catalog feeds the Home hero banner. Default "auto".
+- `heroAddonId: string` -- stored as `"heroAddonId"`. Addon ID for catalog mode. Empty = not set.
+- `heroCatalogType: string` -- stored as `"heroCatalogType"`. Catalog type (e.g., "movie", "series") for catalog mode.
+- `heroCatalogId: string` -- stored as `"heroCatalogId"`. Catalog ID for catalog mode.
 
 ### Rules for future work
 
@@ -490,10 +590,17 @@ when addons are loaded and have browsable catalogs.
 - Content (`.home-hero__content`) -- fades + translates up on enter.
 - All colours via CSS variables; no hardcoded hex.
 
+**Props:**
+- `descriptors: CatalogDescriptor[]` -- the full list from installed addons.
+- `forcedDescriptor?: CatalogDescriptor | null` -- when provided (catalog mode), the hero
+  fetches only from that descriptor. Falls back to auto-pick if it returns no items.
+
 **Integration in `src/pages/HomePage.tsx`:**
 - `showHero: boolean = profile != null && !addonsLoading && descriptors.length > 0`
-- When `showHero`, renders `<HomeHero descriptors={descriptors} />` and hides
-  the `<h1>Home</h1>` page title.
+- `heroForcedDescriptor` computed via `useMemo`: looks up the descriptor matching
+  `settings.heroAddonId + heroCatalogType + heroCatalogId`; returns `null` in auto mode.
+- When `showHero`, renders `<HomeHero descriptors={descriptors} forcedDescriptor={heroForcedDescriptor} />`
+  and hides the `<h1>Home</h1>` page title.
 - Uses ternary (`? :`) rather than `&&` to avoid the `null | Profile` JSX
   children issue that causes TSX parse errors in TypeScript 5.9+.
 
@@ -556,3 +663,56 @@ Never write content containing em dash (U+2014), ellipsis (U+2026), middle dot
 The tool silently truncates the file at those characters. Use bash heredoc
 (`cat > file << 'ENDOFFILE'`) for all file creation, and Python byte-level
 operations for repairs.
+
+## 14. Design System (Cinematic UI Foundation)
+
+### Design direction
+
+"Cinematic desktop media center, not a SaaS dashboard."
+- Dark matte backgrounds, poster/backdrop-first layouts
+- Minimal chrome, no over-rounded floating pill UI
+- Premium media shelf feel (Netflix/Plex-like, not a web form)
+- Scale+shadow hover on poster cards (not border-color glow)
+- Consistent motion tokens for all transitions
+
+### Token reference (src/styles.css :root additions)
+
+Colors: --app-bg, --color-surface-2, --color-border-strong, --color-text-subtle
+Shape: --radius-xs (3px), --radius-xl (18px), --control-radius (6px)
+Layout: --nav-height (56px), --page-padding (32px), --content-max-width (1200px)
+Typography: --font-display, --text-xs/sm/md/lg/xl/display
+Effects: --shadow-card, --shadow-hero, --focus-ring, --backdrop-blur
+Motion: --motion-fast (120ms), --motion-med (220ms), --ease-standard
+
+### Reusable UI primitive classes
+
+- `.btn` + modifiers: `--primary`, `--secondary`, `--ghost`, `--danger`, `--sm`, `--lg`
+- `.icon-btn` -- 34x34 square icon-only button
+- `.badge` + `--accent`, `--muted`, `--success`, `--danger`
+- `.skeleton` + `--text`, `--title`, `--card` -- shimmer loading placeholders
+- `.progress-bar` + `.progress-bar__fill`
+- `.input` -- styled text input (also applied via `.settings-hub__panel input` override)
+- `.select-input` -- styled select
+- `.ghost-button` + `--xs`, `--sm` -- secondary actions
+- `.card` + `--flat`
+- `.setting-row` -- horizontal label+control layout for settings pages
+- `.toggle-switch` -- CSS-only toggle
+
+### Key layout rules
+
+- `.content`: `padding: 20px 0 0` only -- horizontal padding is per-page
+- `.page`: `padding: 0 var(--page-padding) 40px`
+- Catalog strips: `padding: 4px var(--page-padding) 12px` (aligns with row headers)
+- Media detail hero: full-bleed, pseudo-element gradients for readability
+
+### Rules for future UI work
+
+1. Never use Edit/Write tools on styles.css (box-drawing chars truncate). Use Python.
+2. All colors via CSS variables -- never hardcode hex in new CSS.
+3. Hover on poster cards = transform + shadow (not border-color).
+4. Episode cards have no persistent selection highlight -- hover state only.
+5. New buttons use .btn primitives, not one-off inline styles.
+6. Settings form controls are standardized via .settings-hub__panel input/select selectors.
+7. Media hero is full-bleed + gradient overlay -- no border-bottom.
+8. Catalog strips use padding: 0 var(--page-padding) for consistent alignment.
+9. No over-rounded pills, no rainbow gradients, no excessive glassmorphism, no emoji icons.

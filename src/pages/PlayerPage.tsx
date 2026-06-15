@@ -398,13 +398,23 @@ export default function PlayerPage() {
     [profile, playable],
   );
 
+  // CW fix: when the video becomes ready and we start the progress interval,
+  // revive the item in Continue Watching (reset cw_dismissed=0) once.
+  // This is the only place we set cw_dismissed=0 -- not in periodic saves.
   useEffect(() => {
-    if (!isReady) return;
+    if (!isReady || !profile || !playable) return;
+    void window.mediaCenter.progress
+      .revive({
+        profileId: profile.id,
+        mediaId: playable.mediaId,
+        playableId: playable.playableId,
+      })
+      .catch(() => {}); // non-fatal
     const id = window.setInterval(() => void saveProgress(false), PROGRESS_SAVE_INTERVAL_MS);
     return () => {
       window.clearInterval(id);
     };
-  }, [isReady, saveProgress]);
+  }, [isReady, profile, playable, saveProgress]);
 
   useEffect(() => {
     return () => {

@@ -18,7 +18,9 @@ import {
   getWatchProgress,
   listContinueWatching,
   clearWatchProgress,
+  reviveWatchProgress,
   resetWatchProgress,
+  dismissMediaFromContinueWatching,
   setWatched,
   listWatchedForMedia,
   cacheSeriesEpisodes,
@@ -32,11 +34,14 @@ import {
   updateAppSettings,
   getSetting,
   setSetting,
+  saveSourcePref,
+  getSourcePref,
 } from "./db.js";
 import type {
   SetWatchedInput,
   AddLibraryItemInput,
   SeriesEpisodeInput,
+  SourcePref,
 } from "./db.js";
 import {
   openInMpv,
@@ -250,6 +255,18 @@ function registerIpcHandlers() {
     ) => resetWatchProgress(args.profileId, args.mediaId, args.playableId),
   );
 
+  ipcMain.handle(
+    IPC.ProgressRevive,
+    (_e, args: { profileId: number; mediaId: string; playableId: string }) =>
+      reviveWatchProgress(args.profileId, args.mediaId, args.playableId),
+  );
+
+  ipcMain.handle(
+    IPC.ProgressDismiss,
+    (_e, args: { profileId: number; mediaId: string }) =>
+      dismissMediaFromContinueWatching(args.profileId, args.mediaId),
+  );
+
   // Watched state ------------------------------------------------------------
   ipcMain.handle(
     IPC.WatchedSet,
@@ -326,6 +343,71 @@ function registerIpcHandlers() {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { ok: false as const, error: msg };
+      }
+    },
+  );
+
+  // App info (for About/Debug page) ----------------------------------------
+  ipcMain.handle(IPC.AppGetInfo, async () => {
+    const userData = app.getPath("userData");
+    const dbPath = path.join(userData, "media-center.db");
+    const nativeAddonDir = path.join(app.getAppPath(), "native", "embedded-mpv");
+    const libmpvPath = path.join(nativeAddonDir, "vendor", "libmpv-2.dll");
+    const libEglPath = path.join(nativeAddonDir, "vendor", "libEGL.dll");
+    const libGlesPath = path.join(nativeAddonDir, "vendor", "libGLESv2.dll");
+    const { mpvPath: mpvPathSetting } = await getAppSettings();
+    return {
+      appVersion: app.getVersion(),
+      userDataPath: userData,
+      dbPath,
+      nativeAddonDir,
+      libmpvPath,
+      libEglPath,
+      libGlesPath,
+      mpvPath: mpvPathSetting,
+      isDev,
+    };
+  });
+
+  // Open a local folder in the OS file manager (safe: only local paths) -----
+  ipcMain.handle(IPC.SystemGetFullscreen, (event) => {
+    const w = BrowserWindow.fromWebContents(event.sender);
+    return w?.isFullScreen() ?? false;
+  });
+
+  ipcMain.handle(IPC.SystemSetFullscreen, (event, value: boolean) => {
+    const w = BrowserWindow.fromWebContents(event.sender);
+    if (!w) return;
+    w.setFullScreen(value);
+  });
+
+  ipcMain.handle(IPC.SystemOpenFolder, async (_e, args: { folderPath: string }) => {
+    try {
+      // shell.openPath opens folders in the system file manager on all platforms.
+      const errMsg = await shell.openPath(args.folderPath);
+      if (errMsg) return { ok: false as const, error: errMsg };
+      return { ok: true as const };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Source preference memory (Phase 3) -------------------------------------
+  ipcMain.handle(IPC.SourcePrefSave, (_e, args: SourcePref) => {
+    try {
+      saveSourcePref(args);
+      return { ok: true as const };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle(
+    IPC.SourcePrefGet,
+    (_e, args: { profileId: number; type: string; mediaId: string; playableId: string }) => {
+      try {
+        return getSourcePref(args.profileId, args.type, args.mediaId, args.playableId);
+      } catch {
+        return null;
       }
     },
   );

@@ -81,36 +81,17 @@ export default function ContinueWatchingRow() {
             },
           },
       {
-        label: "Reset Watch Progress",
-        onSelect: async () => {
-          await window.mediaCenter.progress.reset({
-            profileId: profile.id,
-            mediaId: p.mediaId,
-            playableId: p.playableId,
-          });
-          // After reset, progress is 0 so it leaves the row.
-          setItems((prev) =>
-            prev.filter(
-              (x) => !(x.mediaId === p.mediaId && x.playableId === p.playableId),
-            ),
-          );
-          toast("Progress Reset");
-        },
-      },
-      {
         label: "Remove from Continue Watching",
         danger: true,
         onSelect: async () => {
-          await window.mediaCenter.progress.clear({
+          // Dismiss ALL rows for this mediaId (covers every episode for series,
+          // or the single row for movies). listContinueWatching filters
+          // cw_dismissed=0 so the item will not reappear until the user watches again.
+          await window.mediaCenter.progress.dismiss({
             profileId: profile.id,
             mediaId: p.mediaId,
-            playableId: p.playableId,
           });
-          setItems((prev) =>
-            prev.filter(
-              (x) => !(x.mediaId === p.mediaId && x.playableId === p.playableId),
-            ),
-          );
+          setItems((prev) => prev.filter((x) => x.mediaId !== p.mediaId));
           toast("Removed from Continue Watching");
         },
       },

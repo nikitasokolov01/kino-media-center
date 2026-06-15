@@ -27,6 +27,7 @@ import { formatTime } from "../features/player/playability.js";
 import { chooseBestSource } from "../core/player/sourceRanking.js";
 import { resolveAudioLanguage } from "../core/player/audioPreference.js";
 import { buildPlayRequest, dispatchPlayRequest } from "../features/player/playRequest.js";
+import { setEmbeddedPlayRequest } from "../features/player/embeddedRequest.js";
 import {
   getCachedSources,
   makePrefetchKey,
@@ -92,6 +93,14 @@ export default function MediaPage() {
   // Id of an episode whose Play button was clicked — shows loading state and
   // prevents double-clicks while sources are being fetched.
   const [playingEpisodeId, setPlayingEpisodeId] = useState<string | null>(null);
+
+  // Controls which episode card shows the inline source picker. Set by
+  // "Choose Source" button or when Play is clicked in manual-mode.
+  const [showSourcesForVideoId, setShowSourcesForVideoId] = useState<string | null>(null);
+
+  // Controls visibility of the movie source picker panel (hidden by default,
+  // revealed via "Choose Source" button).
+  const [showMovieSources, setShowMovieSources] = useState(false);
 
   // Saved watch progress for the currently-selected playable, plus the user's
   // resume choice. `resumeMode` defaults to "resume" when progress exists.
@@ -241,11 +250,17 @@ export default function MediaPage() {
     if (!meta) return;
     if (isSeries) return;
     setSelected({ type: "movie", id: meta.id, title: meta.name });
+    setShowMovieSources(false);
   }, [result, isSeries]);
 
   // Translate an episode pick into a SelectedPlayableItem.
+  // Clicking the card body (not Choose Source) also clears any open source panel.
   const handleEpisodeSelect = (video: StremioVideo) => {
     if (!result?.meta) return;
+    // Close the source panel when switching to a different episode via card body.
+    if (video.id !== selectedVideoId) {
+      setShowSourcesForVideoId(null);
+    }
     setSelectedVideoId(video.id);
     setEpisodeTitle(video.title ?? video.name ?? undefined);
     setSelected({
@@ -257,6 +272,111 @@ export default function MediaPage() {
     });
   };
 
+  // Direct play for movies using the player-first embedded flow (embedded ON).
+  // Opens the overlay immediately; source resolution happens inside the overlay.
+  const handleDirectPlayMovie = () => {
+    const m = result?.meta;
+    if (!m || !profile) return;
+    if (!settings.experimentalEmbeddedPlayer) return;
+    setEmbeddedPlayRequest(buildPlayRequest(
+      {
+        backend: "embedded-mpv-experimental",
+        type: "movie",
+        mediaId: m.id,
+        playableId: m.id,
+        mediaTitle: m.name,
+        streamUrl: "",
+        poster: m.poster,
+        pendingSourceFetch: true,
+        manualSourceSelect: !(settings.autoPlayBestSource || settings.autoSelectSource),
+        isAnime,
+      },
+      "manual",
+    ));
+  };
+
+  // Unified Play/Resume handler for movies. Embedded path: player-first overlay.
+  // External MPV path: auto-play best source when auto settings are on, else
+  // reveal the source picker panel.
+  const [moviePlayLoading, setMoviePlayLoading] = useState(false);
+  const handlePlayMovie = async () => {
+    const m = result?.meta;
+    if (!m || !profile || !addons) return;
+
+    if (settings.experimentalEmbeddedPlayer) {
+      handleDirectPlayMovie();
+      return;
+    }
+
+    // External MPV: if neither auto feature is on, just reveal the source panel.
+    if (!settings.autoPlayBestSource && !settings.autoSelectSource) {
+      setShowMovieSources(true);
+      return;
+    }
+
+    setMoviePlayLoading(true);
+    try {
+      const eligibleStream = addons.filter((a) =>
+        addonSupportsResource(a.manifest, "stream", "movie"),
+      );
+      if (eligibleStream.length === 0) {
+        setShowMovieSources(true);
+        return;
+      }
+
+      const seen = new Set<string>();
+      const collected: StreamSourceResult[] = [];
+      await Promise.allSettled(
+        eligibleStream.map((a) =>
+          window.mediaCenter.streams
+            .fetch({ manifestUrl: a.manifestUrl, type: "movie", id: m.id })
+            .then((res) => {
+              (res.streams ?? []).forEach((s: StremioStream, i: number) => {
+                const dk = streamDedupKey(s, `${a.id}#${i}`);
+                if (seen.has(dk)) return;
+                seen.add(dk);
+                collected.push({
+                  stream: s,
+                  source: { addonId: a.id, addonName: a.manifest.name },
+                  key: dk,
+                });
+              });
+            })
+            .catch(() => { /* per-addon failure is non-fatal */ }),
+        ),
+      );
+
+      const best = chooseBestSource(collected, settings);
+      if (!best) {
+        setShowMovieSources(true);
+        return;
+      }
+
+      const req = buildPlayRequest(
+        {
+          backend: "external-mpv",
+          type: "movie",
+          mediaId: m.id,
+          playableId: m.id,
+          mediaTitle: m.name,
+          streamUrl: best.stream.url ?? "",
+          streamTitle: best.stream.title,
+          streamName: best.stream.name,
+          poster: m.poster,
+        },
+        "manual",
+      );
+      await dispatchPlayRequest(req, {
+        subtitleAddons: addons,
+        profileId: profile.id,
+        startSeconds: resumeSeconds,
+        audioLanguageOverride: resolveAudioLanguage(settings, isAnime),
+      });
+    } finally {
+      setMoviePlayLoading(false);
+    }
+  };
+
   // Direct play from the episode card Play button. Selects the episode AND
   // immediately fetches sources + plays the best one when autoPlayBestSource
   // is enabled. Falls back to just selecting the episode (SourcesSection
@@ -266,13 +386,45 @@ export default function MediaPage() {
     // Prevent double-click while loading.
     if (playingEpisodeId === video.id) return;
 
+    // Player-first flow: when the embedded player is active, open the
+    // overlay immediately and let it resolve the best source internally.
+    // Skip all source fetching in MediaPage for this case.
+    if (settings.experimentalEmbeddedPlayer && result?.meta) {
+      const meta = result.meta;
+      const epTitle = video.title ?? video.name ?? undefined;
+      handleEpisodeSelect(video);
+      setEmbeddedPlayRequest(buildPlayRequest(
+        {
+          backend: "embedded-mpv-experimental",
+          type: "series",
+          mediaId: meta.id,
+          playableId: video.id,
+          mediaTitle: meta.name,
+          episodeTitle: epTitle,
+          season: typeof video.season === "number" ? video.season : undefined,
+          episode: typeof video.episode === "number" ? video.episode : undefined,
+          streamUrl: "",
+          poster: meta.poster,
+          pendingSourceFetch: true,
+          // Same logic as movie play: either auto setting triggers auto-play.
+          manualSourceSelect: !(settings.autoPlayBestSource || settings.autoSelectSource),
+          isAnime,
+        },
+        "manual",
+      ));
+      return;
+    }
+
     // Always update selection so the episode card highlights and the inline
     // SourcesSection renders for it (fallback / manual mode).
     handleEpisodeSelect(video);
 
-    // If neither auto feature is on, just selecting is enough -- SourcesSection
-    // will fetch and display sources on its own. No spinner needed.
-    if (!settings.autoPlayBestSource && !settings.autoSelectSource) return;
+    // If neither auto feature is on, show the source picker explicitly so
+    // the user can pick a source.
+    if (!settings.autoPlayBestSource && !settings.autoSelectSource) {
+      setShowSourcesForVideoId(video.id);
+      return;
+    }
 
     setPlayingEpisodeId(video.id);
     try {
@@ -540,6 +692,36 @@ export default function MediaPage() {
     return ordered.find((v) => !watchedSet.has(v.id))?.id ?? null;
   }, [isSeries, videos, watchedSet]);
 
+  // Best episode to play when the user clicks the header Play/Resume button.
+  // Priority: (1) most-recently-updated in-progress row, (2) next-up unwatched,
+  // (3) very first episode. Returns null for movies (not needed there).
+  const seriesResumeTarget = useMemo<{
+    video: StremioVideo;
+    progress: WatchProgress | null;
+  } | null>(() => {
+    if (!isSeries || videos.length === 0) return null;
+
+    // (1) Most-recently-updated in-progress (not completed) row whose episode exists
+    const inProgress = watchedRows
+      .filter((r) => !r.completed && r.progressSeconds >= 30)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+    for (const row of inProgress) {
+      const vid = videos.find((v) => v.id === row.playableId);
+      if (vid) return { video: vid, progress: row };
+    }
+
+    // (2) Next up (first unwatched normal episode)
+    if (nextUpVideoId) {
+      const vid = videos.find((v) => v.id === nextUpVideoId);
+      if (vid) return { video: vid, progress: null };
+    }
+
+    // (3) First episode
+    const firstNormal = videos.find((v) => v.season !== 0) ?? videos[0];
+    return firstNormal ? { video: firstNormal, progress: null } : null;
+  }, [isSeries, videos, watchedRows, nextUpVideoId]);
+
   const backgroundStyle = meta?.background
     ? {
         backgroundImage:
@@ -746,12 +928,86 @@ export default function MediaPage() {
 
           <div className="media-detail__body">
             <div className="media-detail__actions">
+              {/* Movie: Play / Resume button — always shown for movies */}
+              {!isSeries && (
+                <button
+                  type="button"
+                  className="primary-button media-detail__play-btn"
+                  onClick={() => { void handlePlayMovie(); }}
+                  disabled={!result || moviePlayLoading}
+                  title={savedProgress ? "Resume playback" : "Play"}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true" style={{verticalAlign:"middle",marginRight:6,marginBottom:1}}>
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                  </svg>
+                  {moviePlayLoading
+                    ? "Finding sources..."
+                    : savedProgress
+                    ? (
+                      <>
+                        Resume
+                        <span className="media-detail__play-progress">
+                          {" "}{formatTime(savedProgress.progressSeconds)}
+                          {savedProgress.durationSeconds > 0 && (
+                            <>{" "}({Math.round(savedProgress.progressSeconds / savedProgress.durationSeconds * 100)}%)</>
+                          )}
+                        </span>
+                      </>
+                    )
+                    : "Play"}
+                </button>
+              )}
+              {/* Movie: Choose Source toggle */}
+              {!isSeries && (
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => setShowMovieSources((v) => !v)}
+                  disabled={!result}
+                >
+                  {showMovieSources ? "Hide Sources" : "Choose Source"}
+                </button>
+              )}
+              {/* Series: Play / Resume button targeting the best episode */}
+              {isSeries && seriesResumeTarget && (
+                <button
+                  type="button"
+                  className="primary-button media-detail__play-btn"
+                  onClick={() => { void handleDirectPlayEpisode(seriesResumeTarget.video); }}
+                  disabled={!result}
+                  title={seriesResumeTarget.progress ? "Resume playback" : "Play"}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true" style={{verticalAlign:"middle",marginRight:6,marginBottom:1}}>
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                  </svg>
+                  {seriesResumeTarget.progress ? (
+                    <>
+                      Resume
+                      <span className="media-detail__play-progress">
+                        {seriesResumeTarget.video.season != null && seriesResumeTarget.video.episode != null
+                          ? ` S${seriesResumeTarget.video.season}E${seriesResumeTarget.video.episode}`
+                          : ""}
+                        {" "}{formatTime(seriesResumeTarget.progress.progressSeconds)}
+                      </span>
+                    </>
+                  ) : nextUpVideoId === seriesResumeTarget.video.id ? (
+                    <>
+                      Play Next
+                      <span className="media-detail__play-progress">
+                        {seriesResumeTarget.video.season != null && seriesResumeTarget.video.episode != null
+                          ? ` S${seriesResumeTarget.video.season}E${seriesResumeTarget.video.episode}`
+                          : ""}
+                      </span>
+                    </>
+                  ) : "Play"}
+                </button>
+              )}
               <button
                 type="button"
-                className={isInLibrary(type, meta.id) ? "ghost-button" : "primary-button"}
+                className="ghost-button"
                 onClick={handleToggleLibrary}
               >
-                {isInLibrary(type, meta.id) ? "✓ In Library" : "+ Add to Library"}
+                {isInLibrary(type, meta.id) ? "In Library" : "+ Library"}
               </button>
               {!isSeries && (
                 <button
@@ -759,7 +1015,7 @@ export default function MediaPage() {
                   className="ghost-button"
                   onClick={handleToggleMovieWatched}
                 >
-                  {watchedSet.has(meta.id) ? "Mark as Unwatched" : "Mark as Watched"}
+                  {watchedSet.has(meta.id) ? "Unwatch" : "Mark Watched"}
                 </button>
               )}
             </div>
@@ -809,7 +1065,7 @@ export default function MediaPage() {
               // (see EpisodeSelector). No bottom sources block.
               <EpisodeSelector
                 videos={videos}
-                selectedVideoId={selectedVideoId}
+                selectedVideoId={showSourcesForVideoId}
                 onSelect={handleEpisodeSelect}
                 renderSelectedSources={() => renderSourcesArea("inline")}
                 watchedIds={watchedSet}
@@ -818,10 +1074,12 @@ export default function MediaPage() {
                 onMarkSeasonWatched={handleMarkSeasonWatched}
                 onPlayEpisode={handleDirectPlayEpisode}
                 playingEpisodeId={playingEpisodeId}
+                openSourcesForVideoId={showSourcesForVideoId}
+                onToggleSources={setShowSourcesForVideoId}
               />
             ) : (
-              // Movies: sources stay below the details, full layout.
-              renderSourcesArea("full")
+              // Movies: sources shown only when Choose Source is toggled.
+              showMovieSources ? renderSourcesArea("full") : null
             )}
           </div>
         </article>

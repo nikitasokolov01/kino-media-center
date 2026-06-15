@@ -15,6 +15,7 @@ import {
   buildPlayRequest,
   dispatchPlayRequest,
 } from "../features/player/playRequest.js";
+import { setEmbeddedPlayRequest } from "../features/player/embeddedRequest.js";
 import { useSettings } from "../state/SettingsContext.js";
 import { useProfile } from "../state/ProfileContext.js";
 import type {
@@ -85,6 +86,24 @@ function prettyQuality(tier: string): string | null {
   }
 }
 
+/** Score how well a source matches a saved preference (0 = no match). */
+function prefMatchScore(
+  r: StreamSourceResult,
+  pref: { addonId: string; quality: string; sourceName: string },
+): number {
+  let score = 0;
+  if (r.source.addonId === pref.addonId) score += 10;
+  const quality = detectResolution(streamText(r.stream));
+  if (quality === pref.quality && pref.quality !== "unknown") score += 5;
+  if (pref.sourceName) {
+    const prefN = pref.sourceName.toLowerCase();
+    const srcN = (r.stream.name ?? r.stream.title ?? "").toLowerCase();
+    if (srcN && srcN === prefN) score += 6;
+    else if (srcN && (srcN.includes(prefN) || prefN.includes(srcN))) score += 2;
+  }
+  return score;
+}
+
 export default function SourcesSection({
   addons,
   selected,
@@ -123,6 +142,10 @@ export default function SourcesSection({
   // key of the source currently playing (auto-selected best, or a manual pick).
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [currentSourceKey, setCurrentSourceKey] = useState<string | null>(null);
+  /** Ref holding the saved preference for the current selection (loaded async). */
+  const savedPrefRef = useRef<{
+    addonId: string; quality: string; sourceName: string;
+  } | null>(null);
 
   const run = useCallback(() => {
     setReloadKey((k) => k + 1);
@@ -142,14 +165,21 @@ export default function SourcesSection({
     return chooseBestSource(results, settings);
   }, [settings, loading, results]);
 
-  const handlePlayBest = useCallback(
-    async (origin: PlayRequestSource = "manual") => {
-    if (!bestResult || !selected || playingBest) return;
+  // The second-best playable source (best source that isn't currently playing).
+  // Used for the "Try Next Source" button after a failed or unwanted source.
+  const nextBestResult = useMemo(() => {
+    if (!currentSourceKey || results.length === 0) return null;
+    const rest = results.filter((r) => r.key !== currentSourceKey);
+    return chooseBestSource(rest, settings);
+  }, [results, currentSourceKey, settings]);
+
+  // Generic: play a specific source result (not just the ranked best).
+  const handlePlaySource = useCallback(
+    async (result: StreamSourceResult, origin: PlayRequestSource = "manual") => {
+    if (!selected || playingBest) return;
     setBestError(null);
     setPlayingBest(true);
     try {
-      // When experimentalEmbeddedPlayer is ON, auto-play uses the embedded
-      // overlay as the primary backend. External MPV is used otherwise.
       const backend = settings.experimentalEmbeddedPlayer
         ? "embedded-mpv-experimental"
         : "external-mpv";
@@ -164,15 +194,14 @@ export default function SourcesSection({
           episodeTitle,
           season: selected.type === "series" ? selected.season : undefined,
           episode: selected.type === "series" ? selected.episode : undefined,
-          streamUrl: bestResult.stream.url ?? "",
-          streamTitle: bestResult.stream.title,
-          streamName: bestResult.stream.name,
+          streamUrl: result.stream.url ?? "",
+          streamTitle: result.stream.title,
+          streamName: result.stream.name,
           poster: mediaPoster,
         },
         origin,
       );
       const res = await dispatchPlayRequest(req, {
-        // Only pass MPV-specific options when using external MPV.
         ...(backend === "external-mpv"
           ? {
               subtitleAddons: addons,
@@ -183,7 +212,25 @@ export default function SourcesSection({
           : {}),
         origin,
       });
-      if (!res.ok) {
+      if (res.ok) {
+        setCurrentSourceKey(result.key);
+        // Persist source preference (no URL stored -- only identity metadata).
+        if (profile && selected) {
+          const quality = detectResolution(streamText(result.stream));
+          const sourceName = result.stream.name ?? result.stream.title ?? "";
+          void window.mediaCenter.sourcePref
+            .save({
+              profileId: profile.id,
+              type: selected.type,
+              mediaId,
+              playableId: selected.id,
+              addonId: result.source.addonId,
+              quality,
+              sourceName,
+            })
+            .catch(() => {});
+        }
+      } else {
         setBestError(
           res.error ??
             (backend === "external-mpv"
@@ -195,7 +242,6 @@ export default function SourcesSection({
       setPlayingBest(false);
     }
   }, [
-    bestResult,
     selected,
     playingBest,
     mediaId,
@@ -208,6 +254,34 @@ export default function SourcesSection({
     settings,
     isAnime,
   ]);
+
+  const handlePlayBest = useCallback(
+    async (origin: PlayRequestSource = "manual") => {
+    // Player-first flow: when the embedded player is active, open the
+    // overlay immediately with a pending request. The overlay resolves
+    // the best source internally without blocking on SourcesSection fetch.
+    if (settings.experimentalEmbeddedPlayer && selected) {
+      setEmbeddedPlayRequest(buildPlayRequest(
+        {
+          backend: "embedded-mpv-experimental",
+          type: selected.type,
+          mediaId,
+          playableId: selected.id,
+          mediaTitle,
+          episodeTitle,
+          season: selected.type === "series" ? selected.season : undefined,
+          episode: selected.type === "series" ? selected.episode : undefined,
+          streamUrl: "",
+          poster: mediaPoster,
+          pendingSourceFetch: true,
+        },
+        origin,
+      ));
+      return;
+    }
+    if (!bestResult) return;
+    return handlePlaySource(bestResult, origin);
+  }, [settings.experimentalEmbeddedPlayer, selected, mediaId, mediaTitle, episodeTitle, mediaPoster, bestResult, handlePlaySource]);
 
   // ---- Auto-play best source (loop-safe) -----------------------------------
   // Fires AT MOST ONCE per selected playable. We key the guard on the `selected`
@@ -222,7 +296,20 @@ export default function SourcesSection({
   useEffect(() => {
     setSourcesOpen(false);
     setCurrentSourceKey(null);
-  }, [selected]);
+    savedPrefRef.current = null; // clear stale pref immediately
+    if (!selected || !profile) return;
+    // Async-load saved preference; stored in ref (no re-render needed).
+    void window.mediaCenter.sourcePref
+      .get({ profileId: profile.id, type: selected.type, mediaId, playableId: selected.id })
+      .then((pref) => {
+        if (pref) savedPrefRef.current = {
+          addonId: pref.addonId,
+          quality: pref.quality,
+          sourceName: pref.sourceName,
+        };
+      })
+      .catch(() => {});
+  }, [selected, profile, mediaId]);
 
   useEffect(() => {
     if (!settings.autoPlayBestSource) return;
@@ -311,7 +398,25 @@ export default function SourcesSection({
 
     Promise.allSettled(tasks).then(() => {
       if (cancelled) return;
-      setResults(collected);
+      // If a saved preference exists, promote the best-matching source to
+      // the front of the list so it gets tried first on auto-play.
+      let ordered = collected;
+      const pref = savedPrefRef.current;
+      if (pref && collected.length > 1) {
+        let best = -1, bestScore = 0;
+        collected.forEach((r, i) => {
+          const s = prefMatchScore(r, pref);
+          if (s > bestScore) { bestScore = s; best = i; }
+        });
+        if (best > 0 && bestScore >= 10) { // require at least addonId match
+          ordered = [
+            collected[best],
+            ...collected.slice(0, best),
+            ...collected.slice(best + 1),
+          ];
+        }
+      }
+      setResults(ordered);
       setFailures(fails);
       setLoading(false);
       setCompleted(true);
@@ -494,6 +599,20 @@ export default function SourcesSection({
             {sourcesButtonLabel}
           </button>
 
+          {nextBestResult && currentSourceKey && (
+            <button
+              type="button"
+              className="ghost-button ghost-button--xs sources__next-btn"
+              onClick={() => {
+                void handlePlaySource(nextBestResult, "manual");
+              }}
+              disabled={playingBest}
+              title="Try the next best source"
+            >
+              Next Source
+            </button>
+          )}
+
           {!loading && (
             <button
               type="button"
@@ -509,7 +628,17 @@ export default function SourcesSection({
 
         {bestError && (
           <div className="stream-card__action-error" role="alert">
-            {bestError}
+            {bestError}{" "}
+            {nextBestResult && (
+              <button
+                type="button"
+                className="ghost-button ghost-button--xs"
+                onClick={() => { setBestError(null); void handlePlaySource(nextBestResult, "manual"); }}
+                disabled={playingBest}
+              >
+                Try Next Source
+              </button>
+            )}
           </div>
         )}
 
@@ -562,6 +691,18 @@ export default function SourcesSection({
           {sourcesButtonLabel}
         </button>
 
+        {nextBestResult && currentSourceKey && (
+          <button
+            type="button"
+            className="ghost-button sources__next-btn"
+            onClick={() => { void handlePlaySource(nextBestResult, "manual"); }}
+            disabled={playingBest}
+            title="Try the next best source"
+          >
+            Next Source
+          </button>
+        )}
+
         {!loading && (
           <button type="button" className="ghost-button" onClick={run}>
             Refresh
@@ -571,7 +712,17 @@ export default function SourcesSection({
 
       {bestError && (
         <div className="stream-card__action-error" role="alert">
-          {bestError}
+          {bestError}{" "}
+          {nextBestResult && (
+            <button
+              type="button"
+              className="ghost-button ghost-button--xs"
+              onClick={() => { setBestError(null); void handlePlaySource(nextBestResult, "manual"); }}
+              disabled={playingBest}
+            >
+              Try Next Source
+            </button>
+          )}
         </div>
       )}
 

@@ -117,6 +117,16 @@ export interface MediaCenterApi {
       mediaId: string;
       playableId: string;
     }) => Promise<boolean>;
+    revive: (args: {
+      profileId: number;
+      mediaId: string;
+      playableId: string;
+    }) => Promise<void>;
+    /** Dismiss a movie or entire series from CW (sets cw_dismissed=1 on all rows for mediaId). */
+    dismiss: (args: {
+      profileId: number;
+      mediaId: string;
+    }) => Promise<void>;
   };
   watched: {
     set: (args: {
@@ -181,10 +191,51 @@ export interface MediaCenterApi {
   };
   system: {
     openExternal: (url: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+    getFullscreen: () => Promise<boolean>;
+    setFullscreen: (value: boolean) => Promise<void>;
+    openFolder: (folderPath: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  };
+  app: {
+    getInfo: () => Promise<{
+      appVersion: string;
+      userDataPath: string;
+      dbPath: string;
+      nativeAddonDir: string;
+      libmpvPath: string;
+      libEglPath: string;
+      libGlesPath: string;
+      mpvPath: string;
+      isDev: boolean;
+    }>;
   };
   settings: {
     get: () => Promise<AppSettings>;
     update: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  };
+  sourcePref: {
+    save: (args: {
+      profileId: number;
+      type: string;
+      mediaId: string;
+      playableId: string;
+      addonId: string;
+      quality: string;
+      sourceName: string;
+    }) => Promise<{ ok: true } | { ok: false; error: string }>;
+    get: (args: {
+      profileId: number;
+      type: string;
+      mediaId: string;
+      playableId: string;
+    }) => Promise<{
+      profileId: number;
+      type: string;
+      mediaId: string;
+      playableId: string;
+      addonId: string;
+      quality: string;
+      sourceName: string;
+    } | null>;
   };
 }
 

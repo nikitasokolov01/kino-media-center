@@ -1,4 +1,4 @@
-// Settings > Player > Embedded Player — experimental embedded libmpv toggle.
+// Settings > Player > Built-in Player — embedded libmpv canvas player toggle.
 
 import { useState } from "react";
 import { useSettings } from "../../../state/SettingsContext.js";
@@ -18,10 +18,10 @@ export default function EmbeddedPlayerSettings() {
 
   return (
     <div className="settings-panel">
-      <h2 className="settings-panel__title">Embedded Player</h2>
+      <h2 className="settings-panel__title">Built-in Player</h2>
       <p className="muted small">
-        Work-in-progress features. These do not affect normal playback — the
-        external MPV player remains the default.
+        Enable the built-in libmpv player, which renders video directly inside
+        the app window. External MPV is always available as a fallback.
       </p>
 
       {saveError && (
@@ -38,21 +38,21 @@ export default function EmbeddedPlayerSettings() {
             }
           />
           <span>
-            Embedded player (experimental)
+            Enable built-in player
             <span className="muted small">
               {" "}
-              -- adds an <strong>Embedded (experimental)</strong> page that
-              renders libmpv video into an in-app canvas. Copy-based and
-              unoptimized; requires the native addon to be built. Does not
-              replace external MPV.
+              -- renders libmpv video in an in-app canvas overlay.
+              Requires the native addon to be present. External MPV remains
+              available as a fallback via stream cards.
             </span>
           </span>
         </label>
 
-        <div className="warning-banner warning-banner--small" style={{ marginTop: 16 }}>
-          External MPV is always the default and fallback. Enabling this flag only
-          adds the embedded canvas path as an optional alternative.
-        </div>
+        {!settings.experimentalEmbeddedPlayer && (
+          <div className="warning-banner warning-banner--small" style={{ marginTop: 16 }}>
+            Built-in player is disabled. All playback will use External MPV.
+          </div>
+        )}
       </section>
     </div>
   );

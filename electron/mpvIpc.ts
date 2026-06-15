@@ -19,7 +19,7 @@
 // Reference: https://mpv.io/manual/master/#json-ipc
 
 import net from "node:net";
-import { upsertWatchProgress } from "./db.js";
+import { upsertWatchProgress, reviveWatchProgress } from "./db.js";
 
 export interface MpvProgressContext {
   /**
@@ -189,7 +189,6 @@ export class MpvIpcSession {
   private stopped = false;
   private connected = false;
   private prefsApplied = false;
-
   constructor(
     private readonly pipePath: string,
     private readonly context: MpvProgressContext,
@@ -226,6 +225,20 @@ export class MpvIpcSession {
           sock.on("close", () => this.handleSocketGone());
           sock.on("error", () => this.handleSocketGone());
           this.startPolling();
+          // CW fix: revive the item in Continue Watching when a new MPV session
+          // starts. This is the ONLY place cw_dismissed is reset to 0.
+          // Guard matches the existing pattern in persist() (line ~553).
+          if (typeof this.context.profileId === "number") {
+            try {
+              reviveWatchProgress(
+                this.context.profileId,
+                this.context.mediaId,
+                this.context.playableId,
+              );
+            } catch {
+              // non-fatal
+            }
+          }
           resolve(true);
         });
 

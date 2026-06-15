@@ -123,6 +123,22 @@ export function initDb(): Database.Database {
       position  INTEGER NOT NULL,
       PRIMARY KEY (series_id, video_id)
     );
+
+    -- Per-profile source preference: remembers which source (by fingerprint)
+    -- worked last time for a given movie/episode.  No direct stream URLs are
+    -- stored here -- only stable identity metadata.
+    CREATE TABLE IF NOT EXISTS source_prefs (
+      profile_id   INTEGER NOT NULL,
+      type         TEXT    NOT NULL,
+      media_id     TEXT    NOT NULL,
+      playable_id  TEXT    NOT NULL,
+      addon_id     TEXT    NOT NULL,
+      quality      TEXT    NOT NULL DEFAULT '',
+      source_name  TEXT    NOT NULL DEFAULT '',
+      updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (profile_id, type, media_id, playable_id),
+      FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    );
   `);
 
   // Migration: add `completed` to watch_progress if upgrading from an older
@@ -134,6 +150,11 @@ export function initDb(): Database.Database {
   if (!wpCols.some((c) => c.name === "completed")) {
     db.exec(
       "ALTER TABLE watch_progress ADD COLUMN completed INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+  if (!wpCols.some((c) => c.name === "cw_dismissed")) {
+    db.exec(
+      "ALTER TABLE watch_progress ADD COLUMN cw_dismissed INTEGER NOT NULL DEFAULT 0",
     );
   }
 
@@ -479,6 +500,7 @@ export function listWatchProgress(
       `${PROGRESS_SELECT}
        WHERE profile_id = ?
          AND completed = 0
+         AND cw_dismissed = 0
          AND progress_seconds >= 30
        ORDER BY updated_at DESC
        LIMIT ?`,
@@ -496,10 +518,49 @@ export function clearWatchProgress(
 ): boolean {
   const info = require_db()
     .prepare(
-      "DELETE FROM watch_progress WHERE profile_id = ? AND media_id = ? AND playable_id = ?",
+      `UPDATE watch_progress
+       SET cw_dismissed = 1, updated_at = datetime('now')
+       WHERE profile_id = ? AND media_id = ? AND playable_id = ?`,
     )
     .run(profileId, mediaId, playableId);
   return info.changes > 0;
+}
+
+/**
+ * Clear the cw_dismissed flag so the item re-appears in Continue Watching.
+ * Called once when a new play session starts (not from the periodic poll loop).
+ */
+export function reviveWatchProgress(
+  profileId: number,
+  mediaId: string,
+  playableId: string,
+): void {
+  require_db()
+    .prepare(
+      `UPDATE watch_progress
+       SET cw_dismissed = 0, updated_at = datetime('now')
+       WHERE profile_id = ? AND media_id = ? AND playable_id = ?`,
+    )
+    .run(profileId, mediaId, playableId);
+}
+
+/**
+ * Dismiss a movie or entire series from Continue Watching by setting
+ * cw_dismissed=1 on ALL progress rows for that media_id (profile-scoped).
+ * For movies this is one row; for series this covers every episode row.
+ * The revive() call at playback start will restore the specific episode.
+ */
+export function dismissMediaFromContinueWatching(
+  profileId: number,
+  mediaId: string,
+): void {
+  require_db()
+    .prepare(
+      `UPDATE watch_progress
+       SET cw_dismissed = 1, updated_at = datetime('now')
+       WHERE profile_id = ? AND media_id = ?`,
+    )
+    .run(profileId, mediaId);
 }
 
 /** Reset progress to 0 and clear completed, keeping the row's metadata. */
@@ -833,7 +894,7 @@ export function listContinueWatching(
 ): WatchProgress[] {
   const allRows = (
     require_db()
-      .prepare(`${PROGRESS_SELECT} WHERE profile_id = ? ORDER BY updated_at DESC`)
+      .prepare(`${PROGRESS_SELECT} WHERE profile_id = ? AND cw_dismissed = 0 ORDER BY updated_at DESC`)
       .all(profileId) as Array<Omit<WatchProgress, "completed"> & { completed: number }>
   ).map((r) => rowToProgress(r)!);
 
@@ -1066,8 +1127,30 @@ export interface AppSettings {
   backgroundStyle: string;
   /** Custom background solid color (hex). Used when backgroundStyle="custom-solid". */
   customBackgroundColor: string;
-  /** Custom background gradient CSS value. Reserved for future use. */
+  /** Custom background gradient CSS value. Used when backgroundStyle="custom-gradient". */
   customBackgroundGradient: string;
+  /** Gradient background color A (hex). Applied when backgroundStyle is subtle/neon-gradient. */
+  bgGradientColorA: string;
+  /** Gradient background color B (hex). Applied when backgroundStyle is subtle/neon-gradient. */
+  bgGradientColorB: string;
+  /** Gradient angle in degrees for the gradient background. Default 135. */
+  bgGradientAngle: number;
+  /** JSON-serialised CustomThemePreset[] -- user-defined named colour themes. */
+  customThemes: string;
+  /** ID of the currently applied custom theme preset (from customThemes), or empty. */
+  activeCustomThemeId: string;
+  /**
+   * Home hero source mode.
+   * "auto" = pick from first available catalogs (default).
+   * "catalog" = use the addon/catalog identified by heroAddonId + heroCatalogType + heroCatalogId.
+   */
+  heroSourceMode: "auto" | "catalog";
+  /** Addon ID for hero catalog mode. */
+  heroAddonId: string;
+  /** Catalog type for hero catalog mode ("movie" | "series" | …). */
+  heroCatalogType: string;
+  /** Catalog ID for hero catalog mode. */
+  heroCatalogId: string;
 }
 
 const DEFAULTS: AppSettings = {
@@ -1081,14 +1164,23 @@ const DEFAULTS: AppSettings = {
   autoPlayBestSource: false,
   preferredSourceQuality: "best",
   hideCamSources: true,
-  experimentalEmbeddedPlayer: false,
+  experimentalEmbeddedPlayer: true,
   themeId: "",
   accentColor: "",
   customCss: "",
   posterRadius: "soft",
   backgroundStyle: "",
+  bgGradientColorA: "#0a0d14",
+  bgGradientColorB: "#111520",
+  bgGradientAngle: 135,
   customBackgroundColor: "",
   customBackgroundGradient: "",
+  customThemes: "[]",
+  activeCustomThemeId: "",
+  heroSourceMode: "auto",
+  heroAddonId: "",
+  heroCatalogType: "",
+  heroCatalogId: "",
 };
 
 export function getSetting(key: string): string | null {
@@ -1154,8 +1246,18 @@ export function getAppSettings(): AppSettings {
     customCss:   getSetting("customCss")   ?? DEFAULTS.customCss,
     posterRadius:            getSetting("posterRadius")            ?? DEFAULTS.posterRadius,
     backgroundStyle:         getSetting("backgroundStyle")         ?? DEFAULTS.backgroundStyle,
+    bgGradientColorA:        getSetting("bgGradientColorA")        ?? DEFAULTS.bgGradientColorA,
+    bgGradientColorB:        getSetting("bgGradientColorB")        ?? DEFAULTS.bgGradientColorB,
+    bgGradientAngle:         Number(getSetting("bgGradientAngle")  ?? DEFAULTS.bgGradientAngle),
     customBackgroundColor:   getSetting("customBackgroundColor")   ?? DEFAULTS.customBackgroundColor,
     customBackgroundGradient: getSetting("customBackgroundGradient") ?? DEFAULTS.customBackgroundGradient,
+    customThemes: getSetting("customThemes") ?? DEFAULTS.customThemes,
+    activeCustomThemeId: getSetting("activeCustomThemeId") ?? DEFAULTS.activeCustomThemeId,
+    heroSourceMode:
+      getSetting("heroSourceMode") === "catalog" ? "catalog" : DEFAULTS.heroSourceMode,
+    heroAddonId: getSetting("heroAddonId") ?? DEFAULTS.heroAddonId,
+    heroCatalogType: getSetting("heroCatalogType") ?? DEFAULTS.heroCatalogType,
+    heroCatalogId: getSetting("heroCatalogId") ?? DEFAULTS.heroCatalogId,
   };
 }
 
@@ -1215,11 +1317,93 @@ export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   if (patch.backgroundStyle !== undefined) {
     setSetting("backgroundStyle", patch.backgroundStyle);
   }
+  if (patch.bgGradientColorA !== undefined) {
+    setSetting("bgGradientColorA", patch.bgGradientColorA);
+  }
+  if (patch.bgGradientColorB !== undefined) {
+    setSetting("bgGradientColorB", patch.bgGradientColorB);
+  }
+  if (patch.bgGradientAngle !== undefined) {
+    setSetting("bgGradientAngle", String(patch.bgGradientAngle));
+  }
   if (patch.customBackgroundColor !== undefined) {
     setSetting("customBackgroundColor", patch.customBackgroundColor);
   }
   if (patch.customBackgroundGradient !== undefined) {
     setSetting("customBackgroundGradient", patch.customBackgroundGradient);
   }
+  if (patch.customThemes !== undefined) {
+    setSetting("customThemes", patch.customThemes);
+  }
+  if (patch.activeCustomThemeId !== undefined) {
+    setSetting("activeCustomThemeId", patch.activeCustomThemeId);
+  }
+  if (patch.heroSourceMode !== undefined) {
+    setSetting("heroSourceMode", patch.heroSourceMode);
+  }
+  if (patch.heroAddonId !== undefined) {
+    setSetting("heroAddonId", patch.heroAddonId);
+  }
+  if (patch.heroCatalogType !== undefined) {
+    setSetting("heroCatalogType", patch.heroCatalogType);
+  }
+  if (patch.heroCatalogId !== undefined) {
+    setSetting("heroCatalogId", patch.heroCatalogId);
+  }
   return getAppSettings();
+}
+
+// ---- Source Preferences (Phase 3: remember last successful source) ----------
+
+export interface SourcePref {
+  profileId: number;
+  type: string;
+  mediaId: string;
+  playableId: string;
+  addonId: string;
+  quality: string;
+  sourceName: string;
+}
+
+export function saveSourcePref(input: SourcePref): void {
+  require_db()
+    .prepare(
+      `INSERT INTO source_prefs (
+         profile_id, type, media_id, playable_id, addon_id, quality, source_name, updated_at
+       ) VALUES (
+         @profileId, @type, @mediaId, @playableId, @addonId, @quality, @sourceName, datetime('now')
+       )
+       ON CONFLICT(profile_id, type, media_id, playable_id) DO UPDATE SET
+         addon_id    = excluded.addon_id,
+         quality     = excluded.quality,
+         source_name = excluded.source_name,
+         updated_at  = datetime('now')`,
+    )
+    .run({
+      profileId:  input.profileId,
+      type:       input.type,
+      mediaId:    input.mediaId,
+      playableId: input.playableId,
+      addonId:    input.addonId,
+      quality:    input.quality,
+      sourceName: input.sourceName,
+    });
+}
+
+export function getSourcePref(
+  profileId: number,
+  type: string,
+  mediaId: string,
+  playableId: string,
+): SourcePref | null {
+  const row = require_db()
+    .prepare(
+      `SELECT profile_id AS profileId, type, media_id AS mediaId,
+              playable_id AS playableId, addon_id AS addonId,
+              quality, source_name AS sourceName
+       FROM source_prefs
+       WHERE profile_id = ? AND type = ? AND media_id = ? AND playable_id = ?`,
+    )
+    .get(profileId, type, mediaId, playableId) as SourcePref | undefined;
+  return row ?? null;
 }
