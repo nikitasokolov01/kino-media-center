@@ -111,6 +111,25 @@ const api = {
     export: (args: { profileId: number; profileName?: string }) =>
       ipcRenderer.invoke(IPC.RatingExport, args),
   },
+  caughtUp: {
+    get: (args: { profileId: number; mediaId: string }) =>
+      ipcRenderer.invoke(IPC.CaughtUpGet, args),
+    set: (args: {
+      profileId: number;
+      mediaType: string;
+      mediaId: string;
+      title?: string;
+      latestSeason?: number | null;
+      latestEpisode?: number | null;
+      latestEpisodeId?: string | null;
+      latestEpisodeTitle?: string | null;
+      totalEpisodeCount?: number;
+    }) => ipcRenderer.invoke(IPC.CaughtUpSet, args),
+    clear: (args: { profileId: number; mediaId: string }) =>
+      ipcRenderer.invoke(IPC.CaughtUpClear, args),
+    badges: (args: { profileId: number; mediaIds: string[] }) =>
+      ipcRenderer.invoke(IPC.CaughtUpBadges, args),
+  },
   library: {
     add: (args: {
       profileId: number;

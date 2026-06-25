@@ -48,6 +48,28 @@ export interface RatingExportResult {
   counts: { movies: number; series: number; anime: number };
 }
 
+export interface CaughtUpSnapshot {
+  id: number;
+  profileId: number;
+  mediaType: string;
+  mediaId: string;
+  title: string;
+  latestSeason: number | null;
+  latestEpisode: number | null;
+  latestEpisodeId: string | null;
+  latestEpisodeTitle: string | null;
+  totalEpisodeCount: number;
+  caughtUpAt: string;
+  updatedAt: string;
+}
+
+export interface NewEpisodeBadge {
+  hasNew: boolean;
+  latestSeason: number | null;
+  latestEpisode: number | null;
+  label: string;
+}
+
 export interface MediaCenterApi {
   profile: {
     getDefault: () => Promise<Profile>;
@@ -190,6 +212,25 @@ export interface MediaCenterApi {
       profileId: number;
       profileName?: string;
     }) => Promise<RatingExportResult | { ok: false; error: string } | null>;
+  };
+  caughtUp: {
+    get: (args: { profileId: number; mediaId: string }) => Promise<CaughtUpSnapshot | null>;
+    set: (args: {
+      profileId: number;
+      mediaType: string;
+      mediaId: string;
+      title?: string;
+      latestSeason?: number | null;
+      latestEpisode?: number | null;
+      latestEpisodeId?: string | null;
+      latestEpisodeTitle?: string | null;
+      totalEpisodeCount?: number;
+    }) => Promise<CaughtUpSnapshot>;
+    clear: (args: { profileId: number; mediaId: string }) => Promise<{ ok: true }>;
+    badges: (args: {
+      profileId: number;
+      mediaIds: string[];
+    }) => Promise<Record<string, NewEpisodeBadge>>;
   };
   library: {
     add: (args: {

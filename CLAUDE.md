@@ -967,3 +967,56 @@ implementing) future AniList sync.
   in `db.ts`. Marking unwatched zeroes only that episode's progress (no wipe of
   other history) and Continue Watching / resume are unaffected. Verified, not
   rebuilt this phase.
+## 18. Airing / New-Episode Badge (Phase 3)
+
+Additive, local, per-profile. No playback/source/progress/native-MPV changes;
+no AniList, no external APIs. Shows a "New Episode" badge for series/anime the
+user was previously CAUGHT UP on when newer metadata appears.
+
+### Database
+- New table `series_caught_up` (in `electron/db.ts` schema, `CREATE TABLE IF NOT
+  EXISTS`): per `(profile_id, media_type, media_id)` snapshot of the latest
+  episode the user had watched through when fully caught up -- `latest_season`,
+  `latest_episode`, `latest_episode_id`, `latest_episode_title`,
+  `total_episode_count`, timestamps. `media_type` is "series" (anime is type
+  series in Stremio). Movies are never tracked.
+- Functions: `getCaughtUpSnapshot`, `setCaughtUpSnapshot` (upsert),
+  `clearCaughtUpSnapshot`, `getNewEpisodeBadge`, `getNewEpisodeBadges` (batch).
+  Types: `CaughtUpSnapshot`, `SetCaughtUpInput`, `NewEpisodeBadge`.
+
+### Caught-up + badge logic
+- "Caught up" = at least one normal (season != 0) episode exists AND every
+  normal episode is completed. Computed in the renderer (`isCaughtUp` in
+  `src/core/episodes/episodeProgressState.ts`) where the meta `videos` +
+  watched set are available.
+- The snapshot is upserted ONLY when the user is currently caught up (so it
+  advances to the newest-watched episode; marking unwatched never sets
+  caught-up, avoiding false badges).
+- `getNewEpisodeBadge` (main) compares the snapshot to the latest normal episode
+  in the cached `series_episodes` list: newer by season/episode OR a higher
+  normal-episode count (fallback for anime absolute numbering / missing
+  seasons). Returns a badge only when a snapshot exists AND something is newer.
+- `src/core/episodes/episodeProgressState.ts`: `normalEpisodes`,
+  `isEpisodeNewer`, `getLatestRegularEpisode`, `isCaughtUp`,
+  `getNewEpisodeBadgeLabel` ("S8E4 Out" / "New Episode").
+
+### IPC / preload (four-layer)
+- Channels: `caught-up:get`, `caught-up:set`, `caught-up:clear`,
+  `caught-up:badges`. `window.mediaCenter.caughtUp.{get,set,clear,badges}`.
+  Types in `src/types/preload.d.ts` (`CaughtUpSnapshot`, `NewEpisodeBadge`).
+
+### Badge surfaces
+- Continue Watching cards + Library Recent cards: small corner "New" badge
+  (title = full label) via batched `caughtUp.badges`.
+- Media detail hero: a `media-badge--new` (e.g. "S8E4 Out"), computed locally
+  from the snapshot vs the current meta latest.
+- Episode selector header: `episode-selector__new-badge`.
+- Movies never show it.
+
+### Limitations / dev testing
+- `series_episodes` only refreshes when a show is opened, so the badge for a
+  truly-airing show appears after the cache next updates (re-open). A periodic
+  background metadata refresh is a future item.
+- DEV-only "Simulate new ep (dev)" button on the series media page (gated behind
+  `import.meta.env.DEV`) rolls the snapshot back one episode so the badge can be
+  tested without waiting for a real airing episode.

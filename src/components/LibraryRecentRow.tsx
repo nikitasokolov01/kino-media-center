@@ -2,11 +2,12 @@
 // added to their library, ordered newest-first. Hides itself when the library
 // is empty so the Home page doesn't look broken on a fresh install.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLibrary } from "../state/LibraryContext.js";
+import { useProfile } from "../state/ProfileContext.js";
 import { useDragScroll } from "../features/ui/useDragScroll.js";
-import type { LibraryItem } from "../types/preload.js";
+import type { LibraryItem, NewEpisodeBadge } from "../types/preload.js";
 
 const MAX_ITEMS = 20;
 
@@ -21,10 +22,27 @@ function sortedRecent(items: LibraryItem[]): LibraryItem[] {
 
 export default function LibraryRecentRow() {
   const { items, loading } = useLibrary();
+  const { profile } = useProfile();
   const navigate = useNavigate();
 
   const recent = useMemo(() => sortedRecent(items), [items]);
   const stripRef = useDragScroll<HTMLDivElement>();
+  const [newEpBadges, setNewEpBadges] = useState<Record<string, NewEpisodeBadge>>({});
+
+  // New Episode badges for series items the user was caught up on.
+  useEffect(() => {
+    if (!profile) { setNewEpBadges({}); return; }
+    const ids = Array.from(
+      new Set(recent.filter((it) => it.type === "series").map((it) => it.mediaId)),
+    );
+    if (ids.length === 0) { setNewEpBadges({}); return; }
+    let cancelled = false;
+    window.mediaCenter.caughtUp
+      .badges({ profileId: profile.id, mediaIds: ids })
+      .then((m) => { if (!cancelled) setNewEpBadges(m); })
+      .catch(() => { if (!cancelled) setNewEpBadges({}); });
+    return () => { cancelled = true; };
+  }, [profile, recent]);
 
   // Nothing to show.
   if (loading || recent.length === 0) return null;
@@ -77,6 +95,9 @@ export default function LibraryRecentRow() {
                   </div>
                 )}
                 <span className="lib-recent__type-badge">{it.type}</span>
+                {newEpBadges[it.mediaId]?.hasNew && (
+                  <span className="new-ep-badge" title={newEpBadges[it.mediaId].label}>New</span>
+                )}
               </div>
               <div className="catalog-item__title">{it.title}</div>
               {it.releaseInfo && (

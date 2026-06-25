@@ -4,57 +4,49 @@ Last updated: 2026-06-18
 
 ## What was done this session
 
-Phase 2 of the bug-fix + foundations sprint: local ratings + watched controls.
-Additive and local-only; no playback/source/progress/native-MPV changes. Verified
-with `tsc` on renderer + electron (both clean). See CLAUDE.md section 17.
+Phase 3: airing / new-episode badge. Additive, local, per-profile. No
+playback/source/progress/native-MPV/ratings changes. No AniList. Verified with
+`tsc` on renderer + electron (both clean). See CLAUDE.md section 18.
 
-### Local ratings (per profile, local-only)
-- New SQLite table `media_ratings` (per profile; movie/series/anime; 1-10 scale
-  stored, 5 half-step stars in UI). `getRating`/`setRating`/`clearRating`/`listRatings`.
-- IPC `rating:get|set|clear|export` (four layers); `window.mediaCenter.ratings.*`.
-- `RatingControl.tsx` on the media detail page (set/update/clear, persists,
-  profile-specific). No stream URLs involved.
-
-### Ratings export
-- Settings -> About -> Data -> "Export ratings (JSON)": folder picker writes
-  pretty `movies.json` / `series.json` / `anime.json` (empty `[]` if none, no
-  stream URLs). Success/failure message shown.
-
-### Manual episode watched controls
-- Confirmed existing per-episode watched/unwatched toggle in `EpisodeSelector`
-  (via `watched.set`/`setWatched`) still works; unwatch clears only that
-  episode's completion; Continue Watching / resume unaffected. Not rebuilt.
-
-### AniList note
-- Ratings + watched are structured to map onto a future AniList sync (per
-  profile, stable media ids, 1-10 scale), but no AniList code exists yet.
+### New-episode badge
+- New SQLite table `series_caught_up` (per profile; snapshot of the latest
+  episode watched-through when caught up; movies excluded).
+- IPC `caught-up:get|set|clear|badges` (four layers); `window.mediaCenter.caughtUp.*`.
+- `src/core/episodes/episodeProgressState.ts`: caught-up + episode-ordering helpers.
+- Snapshot is written only when the user is fully caught up (advances forward);
+  marking unwatched never marks caught-up. Badge = snapshot exists AND current
+  metadata shows a newer episode (season/episode, with episode-count fallback
+  for anime/irregular numbering).
+- Badges: Continue Watching + Library Recent corner "New"; media detail hero
+  ("S8E4 Out"); episode selector header. Never on movies.
+- DEV-only "Simulate new ep (dev)" button on the series page to test without a
+  real airing episode.
 
 ## Files changed
-- `electron/db.ts` (media_ratings table + rating fns/types)
-- `electron/ipc-channels.ts`, `electron/main.ts` (rating handlers + export dialog)
-- `electron/preload.ts`, `src/types/preload.d.ts` (ratings API + MediaRating)
-- `src/components/RatingControl.tsx` (new)
-- `src/pages/MediaPage.tsx` (RatingControl integration)
-- `src/pages/settings/sections/AboutSettings.tsx` (export button + Data section)
-- `src/styles.css` (rating control styles)
+- `electron/db.ts` (series_caught_up table + caught-up/badge fns/types)
+- `electron/ipc-channels.ts`, `electron/main.ts` (caught-up handlers)
+- `electron/preload.ts`, `src/types/preload.d.ts` (caughtUp API + types)
+- `src/core/episodes/episodeProgressState.ts` (new)
+- `src/pages/MediaPage.tsx` (snapshot write + hero badge + dev button + Ep label)
+- `src/components/EpisodeSelector.tsx` (header badge prop)
+- `src/components/ContinueWatchingRow.tsx`, `src/components/LibraryRecentRow.tsx` (card badges)
+- `src/styles.css` (badge styles)
 
 ## Current state
 - TypeScript: clean (renderer + electron).
-- Run `npm run build` on Windows to confirm the production bundle (the Linux dev
-  sandbox cannot run the platform-native rollup binary; `tsc` is the gate here).
+- Run `npm run build` on Windows to confirm the production bundle (Linux sandbox
+  cannot run the platform-native rollup binary; `tsc` is the gate here).
 
-## Critical edit rule (still in force)
-Edit/Write tools truncate files mid-content AND convert CRLF->LF on this repo.
-All edits this session used Python byte-ops with CRLF preserved. Verify with `tsc`.
+## Limitation
+- `series_episodes` refreshes on show open, so a real airing show's badge shows
+  after the episode cache next updates. Background refresh = future enhancement.
 
 ## Suggested manual test pass
-1. Rate a movie, a series, and an anime (1-10 via stars); reload the page and
-   restart the app -> ratings persist.
-2. Switch profile -> ratings are separate per profile.
-3. Clear a rating -> it is removed.
-4. Settings -> About -> Data -> Export ratings -> pick a folder -> confirm
-   movies.json / series.json / anime.json are created, pretty-formatted, contain
-   no stream URLs, and empty categories are `[]`.
-5. Mark an episode watched/unwatched -> badge toggles; Continue Watching and
-   resume still behave; episode play still works.
-6. Playback, source picker, collections, spoiler blur all unaffected.
+1. Open an airing series, mark every episode watched -> caught-up snapshot stored.
+2. Click "Simulate new ep (dev)" on that series page (dev build) -> hero shows
+   "SxEy Out"; Continue Watching / Library Recent cards show a "New" corner badge.
+3. Mark the (simulated) new episode watched / become caught up again -> badge clears.
+4. A series you were NOT caught up on shows no badge from old unwatched episodes.
+5. Movies never show the badge.
+6. Continue Watching, progress/resume, ratings/export, source picker, playback
+   all still work.

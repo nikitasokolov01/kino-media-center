@@ -68,6 +68,8 @@ interface Props {
    * already selected. Falls back to the first season if it doesn't exist.
    */
   initialSeason?: number;
+  /** When set, a "New Episode" badge label to show in the header. */
+  newEpisodeLabel?: string;
 }
 
 type SeasonKey = number | "specials" | "other";
@@ -157,6 +159,7 @@ export default function EpisodeSelector({
   onToggleSources,
   showBackdrop,
   initialSeason,
+  newEpisodeLabel,
 }: Props) {
   const { settings } = useSettings();
   // Spoiler blur applies to UNWATCHED episode thumbnails ONLY in episodes/all.
@@ -240,6 +243,11 @@ export default function EpisodeSelector({
       <header className="episode-selector__header">
         <div className="episode-selector__title-row">
           <h2 className="episode-selector__title">Episodes</h2>
+          {newEpisodeLabel && (
+            <span className="episode-selector__new-badge" title="A new episode is available">
+              {newEpisodeLabel}
+            </span>
+          )}
           {videos.length > 0 && (
             <span
               className={`episode-selector__watched-count ${

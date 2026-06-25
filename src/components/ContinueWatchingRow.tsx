@@ -14,7 +14,7 @@ import { useContextMenu } from "../state/ContextMenuContext.js";
 import { useToast } from "../state/ToastContext.js";
 import { useDragScroll } from "../features/ui/useDragScroll.js";
 import { formatTime } from "../features/player/playability.js";
-import type { WatchProgress } from "../types/preload.js";
+import type { WatchProgress, NewEpisodeBadge } from "../types/preload.js";
 
 function pct(p: WatchProgress): number {
   if (!p.durationSeconds || p.durationSeconds <= 0) return 0;
@@ -36,6 +36,7 @@ export default function ContinueWatchingRow() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const stripRef = useDragScroll<HTMLDivElement>();
+  const [newEpBadges, setNewEpBadges] = useState<Record<string, NewEpisodeBadge>>({});
   const [items, setItems] = useState<WatchProgress[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -100,6 +101,21 @@ export default function ContinueWatchingRow() {
     ]);
   }
 
+  // New Episode badges for series items (caught-up shows with a newer episode).
+  useEffect(() => {
+    if (!profile) { setNewEpBadges({}); return; }
+    const ids = Array.from(
+      new Set(items.filter((p) => p.type === "series").map((p) => p.mediaId)),
+    );
+    if (ids.length === 0) { setNewEpBadges({}); return; }
+    let cancelled = false;
+    window.mediaCenter.caughtUp
+      .badges({ profileId: profile.id, mediaIds: ids })
+      .then((m) => { if (!cancelled) setNewEpBadges(m); })
+      .catch(() => { if (!cancelled) setNewEpBadges({}); });
+    return () => { cancelled = true; };
+  }, [profile, items]);
+
   // Nothing to show — render nothing (no empty-state clutter on Home).
   if (!loaded || items.length === 0) return null;
 
@@ -143,6 +159,9 @@ export default function ContinueWatchingRow() {
                   <div className="cw-card__poster cw-card__poster--placeholder" aria-hidden>
                     {p.title.slice(0, 1).toUpperCase()}
                   </div>
+                )}
+                {newEpBadges[p.mediaId]?.hasNew && (
+                  <span className="new-ep-badge" title={newEpBadges[p.mediaId].label}>New</span>
                 )}
                 <div className="cw-card__resume" aria-hidden>▶ Resume</div>
                 <div className="cw-card__progress">

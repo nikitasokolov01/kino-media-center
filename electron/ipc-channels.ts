@@ -67,6 +67,11 @@ export const IPC = {
   RatingSet: "rating:set",
   RatingClear: "rating:clear",
   RatingExport: "rating:export",
+  // Caught-up snapshots + New Episode badge (Phase 3)
+  CaughtUpGet: "caught-up:get",
+  CaughtUpSet: "caught-up:set",
+  CaughtUpClear: "caught-up:clear",
+  CaughtUpBadges: "caught-up:badges",
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

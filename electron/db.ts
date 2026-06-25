@@ -159,6 +159,29 @@ export function initDb(): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_media_ratings_profile
       ON media_ratings(profile_id, media_type);
+
+    -- Per-profile "caught up" snapshot for series/anime. Records the latest
+    -- episode the user had watched THROUGH at the moment they were fully caught
+    -- up. A newer episode in series_episodes than this snapshot => New Episode.
+    CREATE TABLE IF NOT EXISTS series_caught_up (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id            INTEGER NOT NULL,
+      media_type            TEXT    NOT NULL,
+      media_id              TEXT    NOT NULL,
+      title                 TEXT    NOT NULL DEFAULT '',
+      latest_season         INTEGER,
+      latest_episode        INTEGER,
+      latest_episode_id     TEXT,
+      latest_episode_title  TEXT,
+      total_episode_count   INTEGER NOT NULL DEFAULT 0,
+      caught_up_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at            TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (profile_id, media_type, media_id),
+      FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_series_caught_up_profile
+      ON series_caught_up(profile_id);
   `);
 
   // Migration: add `completed` to watch_progress if upgrading from an older
@@ -793,6 +816,175 @@ export function listRatings(profileId: number): MediaRating[] {
   return require_db()
     .prepare(`${RATING_SELECT} WHERE profile_id = ? ORDER BY updated_at DESC`)
     .all(profileId) as MediaRating[];
+}
+
+// ----- Caught-up snapshots + New Episode badge (per profile) -----------------
+
+export interface CaughtUpSnapshot {
+  id: number;
+  profileId: number;
+  mediaType: string;
+  mediaId: string;
+  title: string;
+  latestSeason: number | null;
+  latestEpisode: number | null;
+  latestEpisodeId: string | null;
+  latestEpisodeTitle: string | null;
+  totalEpisodeCount: number;
+  caughtUpAt: string;
+  updatedAt: string;
+}
+
+export interface SetCaughtUpInput {
+  profileId: number;
+  mediaType: string;
+  mediaId: string;
+  title?: string;
+  latestSeason?: number | null;
+  latestEpisode?: number | null;
+  latestEpisodeId?: string | null;
+  latestEpisodeTitle?: string | null;
+  totalEpisodeCount?: number;
+}
+
+/** Badge info for a series/anime: whether a newer episode exists than the
+ *  caught-up snapshot, plus the current latest episode for the label. */
+export interface NewEpisodeBadge {
+  hasNew: boolean;
+  latestSeason: number | null;
+  latestEpisode: number | null;
+  label: string;
+}
+
+const CAUGHT_UP_SELECT =
+  "SELECT id, profile_id AS profileId, media_type AS mediaType, media_id AS mediaId, " +
+  "title, latest_season AS latestSeason, latest_episode AS latestEpisode, " +
+  "latest_episode_id AS latestEpisodeId, latest_episode_title AS latestEpisodeTitle, " +
+  "total_episode_count AS totalEpisodeCount, caught_up_at AS caughtUpAt, updated_at AS updatedAt " +
+  "FROM series_caught_up";
+
+export function getCaughtUpSnapshot(
+  profileId: number,
+  mediaId: string,
+): CaughtUpSnapshot | null {
+  const row = require_db()
+    .prepare(`${CAUGHT_UP_SELECT} WHERE profile_id = ? AND media_id = ?`)
+    .get(profileId, mediaId) as CaughtUpSnapshot | undefined;
+  return row ?? null;
+}
+
+export function setCaughtUpSnapshot(input: SetCaughtUpInput): CaughtUpSnapshot {
+  const d = require_db();
+  d.prepare(
+    `INSERT INTO series_caught_up
+       (profile_id, media_type, media_id, title, latest_season, latest_episode,
+        latest_episode_id, latest_episode_title, total_episode_count, caught_up_at, updated_at)
+     VALUES
+       (@profileId, @mediaType, @mediaId, @title, @latestSeason, @latestEpisode,
+        @latestEpisodeId, @latestEpisodeTitle, @totalEpisodeCount, datetime('now'), datetime('now'))
+     ON CONFLICT(profile_id, media_type, media_id) DO UPDATE SET
+       title = excluded.title,
+       latest_season = excluded.latest_season,
+       latest_episode = excluded.latest_episode,
+       latest_episode_id = excluded.latest_episode_id,
+       latest_episode_title = excluded.latest_episode_title,
+       total_episode_count = excluded.total_episode_count,
+       updated_at = datetime('now')`,
+  ).run({
+    profileId: input.profileId,
+    mediaType: input.mediaType,
+    mediaId: input.mediaId,
+    title: input.title ?? "",
+    latestSeason: input.latestSeason ?? null,
+    latestEpisode: input.latestEpisode ?? null,
+    latestEpisodeId: input.latestEpisodeId ?? null,
+    latestEpisodeTitle: input.latestEpisodeTitle ?? null,
+    totalEpisodeCount: input.totalEpisodeCount ?? 0,
+  });
+  return getCaughtUpSnapshot(input.profileId, input.mediaId)!;
+}
+
+export function clearCaughtUpSnapshot(profileId: number, mediaId: string): { ok: true } {
+  require_db()
+    .prepare("DELETE FROM series_caught_up WHERE profile_id = ? AND media_id = ?")
+    .run(profileId, mediaId);
+  return { ok: true };
+}
+
+/** Latest NORMAL (season !== 0) episode from the cached series_episodes list,
+ *  plus the count of normal episodes. Null when nothing is cached. */
+function latestRegularFromCache(
+  seriesId: string,
+): { season: number | null; episode: number | null; count: number } | null {
+  const eps = getSeriesEpisodes(seriesId).filter((e) => e.season !== 0);
+  if (eps.length === 0) return null;
+  let best = eps[0];
+  for (const e of eps) {
+    const bs = best.season ?? -Infinity;
+    const es = e.season ?? -Infinity;
+    if (es > bs) best = e;
+    else if (es === bs && (e.episode ?? -Infinity) > (best.episode ?? -Infinity)) best = e;
+  }
+  return { season: best.season, episode: best.episode, count: eps.length };
+}
+
+function badgeLabel(season: number | null, episode: number | null): string {
+  if (typeof season === "number" && typeof episode === "number") {
+    return `S${season}E${episode} Out`;
+  }
+  return "New Episode";
+}
+
+/** Compute the New Episode badge for one series/anime. Only true when the user
+ *  was previously caught up (snapshot exists) AND the cached metadata now shows
+ *  a newer latest episode (by season/episode, with a total-count fallback). */
+export function getNewEpisodeBadge(
+  profileId: number,
+  mediaId: string,
+): NewEpisodeBadge | null {
+  const snap = getCaughtUpSnapshot(profileId, mediaId);
+  if (!snap) return null;
+  const latest = latestRegularFromCache(mediaId);
+  if (!latest) return null;
+
+  const seasonsKnown =
+    typeof latest.season === "number" &&
+    typeof latest.episode === "number" &&
+    typeof snap.latestSeason === "number" &&
+    typeof snap.latestEpisode === "number";
+
+  let isNewer = false;
+  if (seasonsKnown) {
+    isNewer =
+      (latest.season as number) > (snap.latestSeason as number) ||
+      ((latest.season as number) === (snap.latestSeason as number) &&
+        (latest.episode as number) > (snap.latestEpisode as number));
+  }
+  // Fallback / supplement for anime absolute numbering or missing seasons:
+  // more normal episodes now than when caught up => something new.
+  if (!isNewer && latest.count > snap.totalEpisodeCount) {
+    isNewer = true;
+  }
+
+  return {
+    hasNew: isNewer,
+    latestSeason: latest.season,
+    latestEpisode: latest.episode,
+    label: badgeLabel(latest.season, latest.episode),
+  };
+}
+
+/** Batch badge lookup for a list of media ids (Continue Watching / Library). */
+export function getNewEpisodeBadges(
+  profileId: number,
+  mediaIds: string[],
+): Record<string, NewEpisodeBadge> {
+  const out: Record<string, NewEpisodeBadge> = {};
+  for (const mediaId of mediaIds) {
+    const b = getNewEpisodeBadge(profileId, mediaId);
+    if (b && b.hasNew) out[mediaId] = b;
+  }
+  return out;
 }
 
 // ----- Series episode cache + "next episode to watch" ----------------------

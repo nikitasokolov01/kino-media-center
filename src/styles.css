@@ -7042,3 +7042,41 @@ html[data-spoiler-blur="off"] .poster--spoiler-blurred,
   background: var(--color-surface-hover, var(--panel-2));
   color: var(--color-text, var(--text));
 }
+
+/* --- Phase 3: New Episode badge --- */
+/* Corner badge on poster/cards (Continue Watching, Library Recent). */
+.new-ep-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-accent-fg, #0b1020);
+  background: var(--color-accent, #6aa3ff);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+/* Media detail badge (full label, sits in the badges row). */
+.media-badge--new {
+  background: var(--color-accent, #6aa3ff);
+  border-color: var(--color-accent, #6aa3ff);
+  color: var(--color-accent-fg, #0b1020);
+  font-weight: 700;
+}
+/* Episode selector header badge. */
+.episode-selector__new-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--color-accent-fg, #0b1020);
+  background: var(--color-accent, #6aa3ff);
+}

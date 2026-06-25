@@ -39,6 +39,12 @@ import MediaTrailer from "../components/MediaTrailer.js";
 import BackButton from "../components/BackButton.js";
 import RatingControl from "../components/RatingControl.js";
 import { getTrailerInfo } from "../core/stremio/trailer.js";
+import {
+  isCaughtUp,
+  getLatestRegularEpisode,
+  isEpisodeNewer,
+  getNewEpisodeBadgeLabel,
+} from "../core/episodes/episodeProgressState.js";
 import type {
   SelectedPlayableItem,
   StremioMeta,
@@ -128,6 +134,10 @@ export default function MediaPage() {
     [watchedRows],
   );
 
+  // New Episode badge for this series (set when caught up before + a newer
+  // episode now exists). Local-only; null = no badge.
+  const [newEpBadge, setNewEpBadge] = useState<{ label: string } | null>(null);
+
   const refreshWatched = useCallback(async () => {
     if (!profile) return;
     try {
@@ -162,6 +172,60 @@ export default function MediaPage() {
       })),
     });
   }, [result, isSeries]);
+
+  // Caught-up snapshot: when the user has watched every normal episode, record
+  // the latest episode so a future newer episode can be flagged. Only writes
+  // when caught up (so marking unwatched never marks caught-up).
+  useEffect(() => {
+    if (!profile || !isSeries) return;
+    const m = result?.meta;
+    if (!m) return;
+    const vids = asArray<StremioVideo>(m.videos);
+    if (vids.length === 0) return;
+    const wset = new Set(watchedRows.filter((r) => r.completed).map((r) => r.playableId));
+    if (!isCaughtUp(vids, wset)) return;
+    const latest = getLatestRegularEpisode(vids);
+    const normalCount = vids.filter((v) => v.season !== 0).length;
+    void window.mediaCenter.caughtUp
+      .set({
+        profileId: profile.id,
+        mediaType: "series",
+        mediaId: m.id,
+        title: m.name,
+        latestSeason: typeof latest?.season === "number" ? latest.season : null,
+        latestEpisode: typeof latest?.episode === "number" ? latest.episode : null,
+        latestEpisodeId: latest?.id ?? null,
+        latestEpisodeTitle: latest?.title ?? latest?.name ?? null,
+        totalEpisodeCount: normalCount,
+      })
+      .then(() => setNewEpBadge(null))
+      .catch(() => {});
+  }, [profile, result, watchedRows, isSeries]);
+
+  // Compute the New Episode badge locally for the hero: snapshot exists AND the
+  // current meta's latest normal episode is newer than the snapshot.
+  useEffect(() => {
+    if (!profile || !isSeries) { setNewEpBadge(null); return; }
+    const m = result?.meta;
+    if (!m) { setNewEpBadge(null); return; }
+    let cancelled = false;
+    window.mediaCenter.caughtUp
+      .get({ profileId: profile.id, mediaId: m.id })
+      .then((snap) => {
+        if (cancelled) return;
+        if (!snap) { setNewEpBadge(null); return; }
+        const vids = asArray<StremioVideo>(m.videos);
+        const latest = getLatestRegularEpisode(vids);
+        const normalCount = vids.filter((v) => v.season !== 0).length;
+        const newer =
+          !!latest &&
+          (isEpisodeNewer(latest, { season: snap.latestSeason, episode: snap.latestEpisode }) ||
+            normalCount > snap.totalEpisodeCount);
+        setNewEpBadge(newer ? { label: getNewEpisodeBadgeLabel(latest) } : null);
+      })
+      .catch(() => { if (!cancelled) setNewEpBadge(null); });
+    return () => { cancelled = true; };
+  }, [profile, result, watchedRows, isSeries]);
 
   // Load installed addons for the active profile.
   useEffect(() => {
@@ -586,6 +650,28 @@ export default function MediaPage() {
 
   // ----- Library + watched controls ----------------------------------------
 
+  // DEV-only: roll the caught-up snapshot back one episode so the New Episode
+  // badge can be tested without waiting for a real airing episode.
+  async function devSimulateNewEpisode() {
+    const m = result?.meta;
+    if (!profile || !m) return;
+    const vids = asArray<StremioVideo>(m.videos);
+    const latest = getLatestRegularEpisode(vids);
+    const normalCount = vids.filter((v) => v.season !== 0).length;
+    await window.mediaCenter.caughtUp.set({
+      profileId: profile.id,
+      mediaType: "series",
+      mediaId: m.id,
+      title: m.name,
+      latestSeason: typeof latest?.season === "number" ? latest.season : null,
+      latestEpisode: typeof latest?.episode === "number" ? Math.max(0, latest.episode - 1) : null,
+      latestEpisodeId: null,
+      latestEpisodeTitle: null,
+      totalEpisodeCount: Math.max(0, normalCount - 1),
+    });
+    setNewEpBadge({ label: getNewEpisodeBadgeLabel(latest) });
+  }
+
   async function handleToggleLibrary() {
     const m = result?.meta;
     if (!m) return;
@@ -987,6 +1073,11 @@ export default function MediaPage() {
                       {String(rating)}
                     </span>
                   )}
+                  {newEpBadge && (
+                    <span className="media-badge media-badge--new" title="A new episode is available">
+                      {newEpBadge.label}
+                    </span>
+                  )}
                 </div>
                 {genres.length > 0 && (
                   <div className="media-detail__genres">
@@ -1082,6 +1173,16 @@ export default function MediaPage() {
               >
                 {isInLibrary(type, meta.id) ? "In Library" : "+ Library"}
               </button>
+              {import.meta.env?.DEV && isSeries && profile && (
+                <button
+                  type="button"
+                  className="ghost-button"
+                  title="DEV: roll back the caught-up snapshot so the New Episode badge appears"
+                  onClick={() => { void devSimulateNewEpisode(); }}
+                >
+                  Simulate new ep (dev)
+                </button>
+              )}
               {!isSeries && (
                 <button
                   type="button"
@@ -1154,6 +1255,7 @@ export default function MediaPage() {
                 videos={videos}
                 showBackdrop={meta.background ?? meta.poster}
                 initialSeason={initialSeasonParam}
+                newEpisodeLabel={newEpBadge?.label}
                 selectedVideoId={showSourcesForVideoId}
                 onSelect={handleEpisodeSelect}
                 renderSelectedSources={() => renderSourcesArea("inline")}

@@ -30,6 +30,11 @@ import {
   listRatings,
   type SetRatingInput,
   type RatingMediaType,
+  getCaughtUpSnapshot,
+  setCaughtUpSnapshot,
+  clearCaughtUpSnapshot,
+  getNewEpisodeBadges,
+  type SetCaughtUpInput,
   cacheSeriesEpisodes,
   getSeriesLibraryStatus,
   getNextEpisodeAfter,
@@ -348,6 +353,24 @@ function registerIpcHandlers() {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
       }
     },
+  );
+
+  // Caught-up snapshots + New Episode badge ----------------------------------
+  ipcMain.handle(
+    IPC.CaughtUpGet,
+    async (_e, args: { profileId: number; mediaId: string }) =>
+      getCaughtUpSnapshot(args.profileId, args.mediaId),
+  );
+  ipcMain.handle(IPC.CaughtUpSet, async (_e, args: SetCaughtUpInput) => setCaughtUpSnapshot(args));
+  ipcMain.handle(
+    IPC.CaughtUpClear,
+    async (_e, args: { profileId: number; mediaId: string }) =>
+      clearCaughtUpSnapshot(args.profileId, args.mediaId),
+  );
+  ipcMain.handle(
+    IPC.CaughtUpBadges,
+    async (_e, args: { profileId: number; mediaIds: string[] }) =>
+      getNewEpisodeBadges(args.profileId, args.mediaIds),
   );
 
   // Library ------------------------------------------------------------------
