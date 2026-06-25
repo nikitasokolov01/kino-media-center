@@ -205,6 +205,52 @@ export function catalogSupportsSearch(catalog: StremioCatalog): boolean {
 }
 
 /**
+ * True if this catalog advertises support for a named extra (e.g. "genre",
+ * "year"). Accepts the modern `extra: [{ name }]` shape and the older
+ * `extraSupported` / `extraRequired` string arrays.
+ */
+export function catalogSupportsExtra(catalog: StremioCatalog, name: string): boolean {
+  if (Array.isArray(catalog.extra)) {
+    if (catalog.extra.some((e) => e && e.name === name)) return true;
+  }
+  if (Array.isArray(catalog.extraSupported) && catalog.extraSupported.includes(name)) {
+    return true;
+  }
+  if (Array.isArray(catalog.extraRequired) && catalog.extraRequired.includes(name)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Return the declared `options` for a named extra (e.g. the genre list), or an
+ * empty array if the catalog declares the extra without options (or not at all).
+ */
+export function getCatalogExtraOptions(catalog: StremioCatalog, name: string): string[] {
+  if (Array.isArray(catalog.extra)) {
+    const entry = catalog.extra.find((e) => e && e.name === name);
+    if (entry && Array.isArray(entry.options)) {
+      return entry.options.filter((o): o is string => typeof o === "string");
+    }
+  }
+  return [];
+}
+
+/**
+ * True if this catalog requires a named extra to be supplied (e.g. some genre
+ * catalogs require `genre`). Used by Discover to know it must pick a default.
+ */
+export function catalogRequiresExtra(catalog: StremioCatalog, name: string): boolean {
+  if (Array.isArray(catalog.extra)) {
+    if (catalog.extra.some((e) => e && e.name === name && e.isRequired)) return true;
+  }
+  if (Array.isArray(catalog.extraRequired) && catalog.extraRequired.includes(name)) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * True if this catalog advertises support for the `skip` extra — i.e. the
  * addon supports pagination by skipping the first N items.
  */

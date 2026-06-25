@@ -1,64 +1,72 @@
 # Session Handoff Notes
 
-Last updated: 2026-06-16
+Last updated: 2026-06-17
 
 ## What was done this session
 
-### 1. Kino rebrand (complete)
-- Window title changed to "Kino" in `electron/main.ts`
-- `app.setPath("userData", ...)` pins userData to `AppData/Roaming/Media Center`
-- `src/components/KinoLogo.tsx` created: SVG cinema-frame wordmark
-- `TopNav.tsx` uses `<KinoLogo mode="wordmark" size={18} />`
-- `AboutSettings.tsx` section heading updated to "Kino"
+A UX bug-fix / polish pass following the feature sprint. CSS + settings behavior
+only; no native MPV, playback, source-selection, trailer-playback, Continue
+Watching, profile, theme, or addon-install changes. Verified with `tsc` on both
+the renderer (`tsconfig.json`) and electron (`electron/tsconfig.json`) -- both
+clean. See CLAUDE.md section 16 for the full reference.
 
-### 2. Custom image background (complete + fixed)
+### Fixes (in priority order)
+1. Drag scrolling: no more native poster/link ghost drag; drag mode always
+   cleans up (pointerup/pointercancel/lostpointercapture/blur). `draggable=false`
+   on card links + imgs; cursor grab/grabbing only while dragging.
+2. Trailer hero: preview is `controls=false` + native media controls hidden via
+   CSS, so no controls flash on media-page load. Expand modal keeps controls.
+3. Home hero: ~25% taller (`clamp(475px, 65vw, 825px)`) and uses clearlogo art
+   when available (text-title fallback).
+4. Poster scale: 4-step themed slider (replaces 4 buttons). Poster layout: visual
+   orientation cards (portrait / landscape / auto) with SVG shapes.
+5. Catalog rename overrides (`catalogNameOverrides` JSON setting) + clean labels:
+   normal browsing UI (Home / Discover / expanded catalog) shows the custom or
+   clean catalog name with no addon/provider suffix; addon names stay in
+   Settings/About and the source picker. Disambiguation only on duplicate names.
+6. Home row margins: removed double horizontal padding on home rows (page +
+   header/strip) so all rows share one inset; hero untouched.
 
-**IPC (4-layer each):**
-- `bg:choose-image` (BgChooseImage): opens file dialog, copies to userData/backgrounds/,
-  returns { ok, path } or null (cancelled)
-- `bg:remove-image` (BgRemoveImage): deletes copied file
+### New files
+- `src/core/catalog/catalogNames.ts`
 
-**New AppSettings fields (5):**
-- `customBackgroundImagePath` - absolute path to copied file
-- `customBackgroundImageFit` - "cover" | "contain"
-- `customBackgroundImagePosition` - "center" | "top" | "bottom"
-- `customBackgroundImageDim` - 0 to 0.85, default 0.45
-- `customBackgroundImageBlur` - 0 to 20px, default 0
+### Touched files
+- `src/features/ui/useDragScroll.ts`
+- `src/components/CatalogItem.tsx`, `ContinueWatchingRow.tsx`, `LibraryRecentRow.tsx`
+- `src/components/MediaTrailer.tsx`
+- `src/components/HomeHero.tsx`, `src/components/CatalogRow.tsx`
+- `src/pages/HomePage.tsx`, `DiscoverPage.tsx`, `ExpandedCatalogPage.tsx`
+- `src/pages/settings/sections/AppearanceSettings.tsx`
+- Settings plumbing: `src/core/player/types.ts`, `electron/db.ts`,
+  `src/state/SettingsContext.tsx` (new `catalogNameOverrides`)
+- `src/styles.css`
 
-**Architecture:**
-- `kino-local://` custom Electron protocol registered in `electron/main.ts` (before
-  `app.whenReady()` with `protocol.registerSchemesAsPrivileged`; handler inside
-  `app.whenReady()` serves `userData/backgrounds/<filename>` via `fs.promises.readFile`)
-- ThemeProvider Effect 7 sets CSS vars (`--bg-img-url`, `--bg-img-fit`, `--bg-img-pos`,
-  `--bg-img-dim`, `--bg-img-blur`, `--bg-img-margin`) on `<html>` and adds class
-  `has-bg-image`
-- `styles.css` rules: `html.has-bg-image body::before` (image, z-index:-1) and
-  `html.has-bg-image body::after` (dim overlay, z-index:-1) handle the painting
-- Custom themes and custom image backgrounds are now COMPATIBLE (removed `!activeCustomThemeId`
-  constraint from showImageBg)
-- AppearanceSettings shows 160x90 preview thumbnail via `kino-local://bg/<filename>` with
-  `onLoad`/`onError` for file-missing detection
-
-**Root cause of the original bug:**
-The previous implementation used `file://` URLs in CSS `background-image`. In Electron dev
-mode the renderer is at `http://localhost:5173`, so `file://` is a different origin and is
-CORS-blocked. The `kino-local://` custom protocol fixes this in both dev and production.
-
-**Files changed this session:**
-- `electron/main.ts` - `protocol` import, `registerSchemesAsPrivileged`, `protocol.handle`
-- `electron/db.ts` - `AppSettings` interface now includes all 5 custom bg image fields
-  (DEFAULTS, getAppSettings, updateAppSettings were already correct)
-- `src/theme/ThemeProvider.tsx` - replaced `pathToFileUrl` with `pathToKinoLocalUrl`,
-  replaced fixed React divs with CSS-var Effect 7, removed `!activeCustomThemeId` constraint
-- `src/styles.css` - appended `html.has-bg-image body::before` + `body::after` rules
-- `src/pages/settings/sections/AppearanceSettings.tsx` - added `bgImageMissing` state,
-  preview thumbnail with onLoad/onError
+### Open item
+- The reported "first three home rows more inward than the rest" could not be
+  reproduced from the CSS (all home rows compute to the same inset). The
+  double-padding fix was applied regardless. If a first-three-specific gap
+  persists at runtime, send a screenshot of the Home page to pin it down.
 
 ## Current state
-- TypeScript: clean (both renderer and electron)
-- No pending fixes
-- Ready to run / build
+- TypeScript: clean (renderer + electron).
+- Run `npm run build` on Windows to confirm the production bundle (the Linux dev
+  sandbox cannot run the platform-native rollup binary; `tsc` is the gate here).
 
-## Critical edit rule
-ALL file edits must use Python byte-level operations. The Edit/Write tools truncate files
-containing em-dash (U+2014), ellipsis (U+2026), or box-drawing characters.
+## Critical edit rule (still in force)
+Edit/Write tools truncate files mid-content AND convert CRLF->LF on this repo.
+All edits this pass were done via Python byte-ops with CRLF preserved, and
+`styles.css` via Python append. Verify with `tsc` after edits.
+
+## Suggested manual test pass
+1. Drag a Home row fast over posters -> no image/link ghost; release -> not stuck.
+2. Click a poster (no drag) -> opens detail. Trackpad/wheel scroll still works.
+3. Open a movie/show -> no trailer controls flash; Watch Trailer still has audio.
+4. Home hero is taller and shows logo art where available (text fallback else).
+5. Settings -> Appearance: poster scale slider (4 steps) updates cards live;
+   layout cards switch portrait/landscape/auto.
+6. Settings -> Appearance -> Category names: rename a catalog -> custom name shows
+   on Home/Discover; Reset restores original; addon names still shown in Settings.
+7. Discover dropdown + Home rows show clean names (no "(AIOMetadata | ...)").
+8. Home rows left-align consistently.
+9. Regression: profiles, library, Continue Watching, progress/resume, source
+   selection, external MPV, addon install all still work.

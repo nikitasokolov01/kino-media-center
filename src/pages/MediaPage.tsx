@@ -35,6 +35,8 @@ import {
 } from "../core/player/sourcePrefetch.js";
 import SourcesSection from "../components/SourcesSection.js";
 import EpisodeSelector from "../components/EpisodeSelector.js";
+import MediaTrailer from "../components/MediaTrailer.js";
+import { getTrailerInfo } from "../core/stremio/trailer.js";
 import type {
   SelectedPlayableItem,
   StremioMeta,
@@ -287,6 +289,8 @@ export default function MediaPage() {
         mediaTitle: m.name,
         streamUrl: "",
         poster: m.poster,
+        background: m.background,
+        logo: m.logo,
         pendingSourceFetch: true,
         manualSourceSelect: !(settings.autoPlayBestSource || settings.autoSelectSource),
         isAnime,
@@ -405,6 +409,8 @@ export default function MediaPage() {
           episode: typeof video.episode === "number" ? video.episode : undefined,
           streamUrl: "",
           poster: meta.poster,
+          background: meta.background,
+          logo: meta.logo,
           pendingSourceFetch: true,
           // Same logic as movie play: either auto setting triggers auto-play.
           manualSourceSelect: !(settings.autoPlayBestSource || settings.autoSelectSource),
@@ -736,6 +742,9 @@ export default function MediaPage() {
       ? String(meta.year)
       : null);
 
+  // Trailer (if any) for the hero preview + Watch Trailer button.
+  const trailer = useMemo(() => getTrailerInfo(meta), [meta]);
+
   const genres = asArray<string>(meta?.genres);
   const cast = asArray<string>(meta?.cast);
   const director = joinList(meta?.director);
@@ -874,10 +883,16 @@ export default function MediaPage() {
       {meta && (
         <article className="media-detail">
           <div
-            className="media-detail__hero"
+            className={`media-detail__hero${trailer ? " media-detail__hero--has-trailer" : ""}`}
             style={backgroundStyle}
-            aria-hidden={backgroundStyle ? undefined : true}
           >
+            {trailer && (
+              <MediaTrailer
+                trailer={trailer}
+                autoplayHero={settings.autoplayTrailers}
+                title={meta.name}
+              />
+            )}
             <div className="media-detail__hero-inner">
               <div className="media-detail__poster">
                 {meta.poster ? (

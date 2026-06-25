@@ -42,6 +42,15 @@ export interface PlayRequest {
   streamTitle?: string;
   streamName?: string;
   poster?: string;
+  /** Landscape backdrop for the cinematic loading overlay (optional). */
+  background?: string;
+  /** Title logo image for the cinematic loading overlay (optional). */
+  logo?: string;
+  /**
+   * Stremio behaviorHints.bingeGroup of the chosen stream, when known. Used by
+   * the next-episode "prefer same source group" selection.
+   */
+  bingeGroup?: string;
   /**
    * When true, the overlay opens immediately (player-first flow) and resolves
    * the best source internally. `streamUrl` is ignored in this case.
@@ -278,6 +287,40 @@ export interface AppSettings {
   customBackgroundImageDim: number;
   /** Blur amount in px applied to the custom image (0-20). Default 0. */
   customBackgroundImageBlur: number;
+  /**
+   * When true, the media detail hero autoplays a muted trailer preview when one
+   * is available. Audio is never auto-enabled; the user must expand the trailer
+   * to hear it. Default true.
+   */
+  autoplayTrailers: boolean;
+  /**
+   * Poster/card size preset. Drives the --poster-scale / --poster-width CSS
+   * variables. Default "normal".
+   */
+  posterScale: "compact" | "normal" | "large" | "xlarge";
+  /**
+   * Poster/card layout. "portrait" = 2:3 posters, "landscape" = 16:9 backdrops,
+   * "auto" = landscape where a backdrop exists, else portrait. Default "portrait".
+   */
+  posterLayout: "portrait" | "landscape" | "auto";
+  /**
+   * Spacing density between cards in media rows/grids. Drives --media-card-gap.
+   * Default "comfortable".
+   */
+  rowDensity: "compact" | "comfortable" | "cinematic";
+  /**
+   * When true (default), the next-episode auto-selection prefers a source from
+   * the same source group/family (binge group, addon, provider, quality,
+   * release) as the current episode before falling back to normal best-source
+   * ranking. Only affects auto-next; manual source selection is unchanged.
+   */
+  preferBingeGroup: boolean;
+  /**
+   * JSON map of user-defined catalog display-name overrides, keyed by a stable
+   * "addonId::type::catalogId" key -> custom name. Applied across normal
+   * browsing UI (Home rows, Discover, expanded catalog). Default "{}".
+   */
+  catalogNameOverrides: string;
 }
 
 /** Per-stream-format capability hints used by the action picker. */

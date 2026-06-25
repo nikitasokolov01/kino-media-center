@@ -7,6 +7,7 @@ import SearchPage from "./pages/SearchPage.js";
 import PlayerPage from "./pages/PlayerPage.js";
 import SettingsPage from "./pages/SettingsPage.js";
 import LibraryPage from "./pages/LibraryPage.js";
+import DiscoverPage from "./pages/DiscoverPage.js";
 import ProfilePicker from "./pages/ProfilePicker.js";
 import ExperimentalEmbeddedPlayerPage from "./pages/ExperimentalEmbeddedPlayerPage.js";
 import EmbeddedPlayerOverlay from "./components/EmbeddedPlayerOverlay.js";
@@ -57,6 +58,7 @@ function AppInner() {
             <Route path="/addons" element={<AddonsPage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/library" element={<LibraryPage />} />
+            <Route path="/discover" element={<DiscoverPage />} />
             <Route
               path="/catalog/:addonId/:type/:catalogId"
               element={<ExpandedCatalogPage />}

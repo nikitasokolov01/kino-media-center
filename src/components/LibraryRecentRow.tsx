@@ -5,6 +5,7 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLibrary } from "../state/LibraryContext.js";
+import { useDragScroll } from "../features/ui/useDragScroll.js";
 import type { LibraryItem } from "../types/preload.js";
 
 const MAX_ITEMS = 20;
@@ -23,6 +24,7 @@ export default function LibraryRecentRow() {
   const navigate = useNavigate();
 
   const recent = useMemo(() => sortedRecent(items), [items]);
+  const stripRef = useDragScroll<HTMLDivElement>();
 
   // Nothing to show.
   if (loading || recent.length === 0) return null;
@@ -39,7 +41,7 @@ export default function LibraryRecentRow() {
           See all in Library
         </button>
       </header>
-      <div className="catalog-row__strip">
+      <div className="catalog-row__strip" ref={stripRef}>
         {recent.map((it) => {
           const to = `/media/${encodeURIComponent(it.type)}/${encodeURIComponent(it.mediaId)}`;
           return (
@@ -51,6 +53,7 @@ export default function LibraryRecentRow() {
               tabIndex={0}
               onClick={() => navigate(to)}
               onKeyDown={(e) => { if (e.key === "Enter") navigate(to); }}
+              draggable={false}
               style={{ cursor: "pointer" }}
             >
               <div className="catalog-item__poster-wrap">
@@ -60,6 +63,7 @@ export default function LibraryRecentRow() {
                     src={it.poster}
                     alt=""
                     loading="lazy"
+                    draggable={false}
                     onError={(e) => {
                       (e.currentTarget as HTMLImageElement).style.display = "none";
                     }}

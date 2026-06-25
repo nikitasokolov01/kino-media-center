@@ -58,6 +58,12 @@ const FALLBACK: AppSettings = {
   customBackgroundImagePosition: "center",
   customBackgroundImageDim: 0.45,
   customBackgroundImageBlur: 0,
+  autoplayTrailers: true,
+  posterScale: "normal",
+  posterLayout: "portrait",
+  rowDensity: "comfortable",
+  preferBingeGroup: true,
+  catalogNameOverrides: "{}",
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);

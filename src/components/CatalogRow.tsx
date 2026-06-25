@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import CatalogItem from "./CatalogItem.js";
+import { useDragScroll } from "../features/ui/useDragScroll.js";
 import { useProfile } from "../state/ProfileContext.js";
 import {
   getHomeCatalogCache,
@@ -39,6 +40,7 @@ export default function CatalogRow({
   manifestUrl,
 }: Props) {
   const { profile } = useProfile();
+  const stripRef = useDragScroll<HTMLDivElement>();
 
   // Seed state from cache so returning to Home is instant.
   const cacheKey = profile
@@ -107,7 +109,7 @@ export default function CatalogRow({
         <Link to={seeAllHref} className="catalog-row__title-link">
           <h2 className="catalog-row__title">{catalogName}</h2>
         </Link>
-        <span className="catalog-row__addon">{addonName} · {type}</span>
+        <span className="catalog-row__addon">{type}</span>
         <span className="catalog-row__spacer" />
         <Link to={seeAllHref} className="catalog-row__see-all">
           See all
@@ -137,7 +139,7 @@ export default function CatalogRow({
       )}
 
       {!loading && !error && items.length > 0 && (
-        <div className="catalog-row__strip">
+        <div className="catalog-row__strip" ref={stripRef}>
           {items.map((it) => (
             <CatalogItem key={`${it.type}:${it.id}`} item={it} />
           ))}

@@ -126,6 +126,28 @@ export default function SourceSelectionSettings() {
         <label className="checkbox-row">
           <input
             type="checkbox"
+            checked={settings.preferBingeGroup}
+            onChange={(e) =>
+              void saveSetting({ preferBingeGroup: e.target.checked })
+            }
+          />
+          <span>
+            Prefer same source group for next episode
+            <span className="muted small">
+              {" "}
+              -- when playing the next episode, try the same
+              addon/provider/quality/source family (binge group) first before
+              normal auto-selection. Only affects auto-next; manual source
+              selection is unchanged.
+            </span>
+          </span>
+        </label>
+      </section>
+
+      <section className="settings-section">
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
             checked={settings.hideCamSources}
             onChange={(e) =>
               void saveSetting({ hideCamSources: e.target.checked })

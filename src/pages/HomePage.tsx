@@ -8,6 +8,7 @@ import LibraryRecentRow from "../components/LibraryRecentRow.js";
 import HomeHero from "../components/HomeHero.js";
 import type { AddonRow } from "../types/preload.js";
 import { catalogRequiresExtras } from "../core/stremio/catalog.js";
+import { resolveCatalogDisplayNames } from "../core/catalog/catalogNames.js";
 import type { StremioCatalog } from "../core/stremio/types.js";
 
 interface CatalogDescriptor {
@@ -71,6 +72,13 @@ export default function HomePage() {
   }, [profile]);
 
   const descriptors = useMemo(() => descriptorsFromAddons(addons), [addons]);
+
+  // Clean display names (rename overrides applied; addon/provider names hidden,
+  // disambiguated only when two catalogs would collapse to the same name).
+  const displayNames = useMemo(
+    () => resolveCatalogDisplayNames(descriptors, settings.catalogNameOverrides),
+    [descriptors, settings.catalogNameOverrides],
+  );
 
   // In catalog mode, find the matching descriptor by addonId + type + catalogId.
   // Pass it to HomeHero so it fetches only that catalog for the hero.
@@ -141,7 +149,7 @@ export default function HomePage() {
               key={d.key}
               addonId={d.addonId}
               addonName={d.addonName}
-              catalogName={d.catalogName}
+              catalogName={displayNames.get(d.key) ?? d.catalogName}
               type={d.type}
               catalogId={d.catalogId}
               manifestUrl={d.manifestUrl}

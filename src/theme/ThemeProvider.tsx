@@ -98,6 +98,9 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
     customBackgroundImagePosition,
     customBackgroundImageDim,
     customBackgroundImageBlur,
+    posterScale,
+    posterLayout,
+    rowDensity,
   } = settings;
 
   // 1. Apply data-theme attribute
@@ -265,6 +268,32 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
     };
   }, [showImageBg, customBackgroundImagePath, customBackgroundImageFit,
       customBackgroundImagePosition, customBackgroundImageDim, customBackgroundImageBlur]);
+
+  // Effect 8: poster/card sizing + layout CSS variables (Phase 2).
+  // Drives card width, aspect ratio, and inter-card gap across home rows,
+  // library grid, search results, and Continue Watching / Next Up.
+  useEffect(() => {
+    const root = document.documentElement;
+    const SCALE: Record<string, string> = {
+      compact: "0.82",
+      normal: "1",
+      large: "1.24",
+      xlarge: "1.48",
+    };
+    const GAP: Record<string, string> = {
+      compact: "10px",
+      comfortable: "14px",
+      cinematic: "22px",
+    };
+    root.style.setProperty("--poster-scale", SCALE[posterScale] ?? "1");
+    root.style.setProperty("--media-card-gap", GAP[rowDensity] ?? "14px");
+    // Default aspect ratio for the global var. "auto" keeps portrait as the
+    // baseline; CatalogItem applies a per-item landscape modifier class when a
+    // backdrop is available.
+    const aspect = posterLayout === "landscape" ? "16 / 9" : "2 / 3";
+    root.style.setProperty("--poster-aspect-ratio", aspect);
+    root.setAttribute("data-poster-layout", posterLayout || "portrait");
+  }, [posterScale, posterLayout, rowDensity]);
 
   return <>{children}</>;
 }

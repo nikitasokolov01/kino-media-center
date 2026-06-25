@@ -1161,6 +1161,18 @@ export interface AppSettings {
   customBackgroundImageDim: number;
   /** Blur radius in px (0-20). Default 0. */
   customBackgroundImageBlur: number;
+  /** Autoplay a muted trailer preview in the media detail hero. Default true. */
+  autoplayTrailers: boolean;
+  /** Poster/card size preset: "compact" | "normal" | "large" | "xlarge". Default "normal". */
+  posterScale: "compact" | "normal" | "large" | "xlarge";
+  /** Poster/card layout: "portrait" | "landscape" | "auto". Default "portrait". */
+  posterLayout: "portrait" | "landscape" | "auto";
+  /** Card spacing density: "compact" | "comfortable" | "cinematic". Default "comfortable". */
+  rowDensity: "compact" | "comfortable" | "cinematic";
+  /** Prefer same source group for next-episode auto-selection. Default true. */
+  preferBingeGroup: boolean;
+  /** JSON map of catalog display-name overrides keyed by addonId::type::catalogId. Default "{}". */
+  catalogNameOverrides: string;
 }
 
 const DEFAULTS: AppSettings = {
@@ -1196,6 +1208,12 @@ const DEFAULTS: AppSettings = {
   customBackgroundImagePosition: "center",
   customBackgroundImageDim: 0.45,
   customBackgroundImageBlur: 0,
+  autoplayTrailers: true,
+  posterScale: "normal",
+  posterLayout: "portrait",
+  rowDensity: "comfortable",
+  preferBingeGroup: true,
+  catalogNameOverrides: "{}",
 };
 
 export function getSetting(key: string): string | null {
@@ -1278,6 +1296,30 @@ export function getAppSettings(): AppSettings {
     customBackgroundImagePosition: getSetting("customBackgroundImagePosition") ?? DEFAULTS.customBackgroundImagePosition,
     customBackgroundImageDim: Number(getSetting("customBackgroundImageDim") ?? DEFAULTS.customBackgroundImageDim),
     customBackgroundImageBlur: Number(getSetting("customBackgroundImageBlur") ?? DEFAULTS.customBackgroundImageBlur),
+    autoplayTrailers:
+      getSetting("autoplayTrailers") === null
+        ? DEFAULTS.autoplayTrailers
+        : getSetting("autoplayTrailers") === "true",
+    posterScale: (["compact", "normal", "large", "xlarge"].includes(
+      getSetting("posterScale") ?? "",
+    )
+      ? getSetting("posterScale")
+      : DEFAULTS.posterScale) as AppSettings["posterScale"],
+    posterLayout: (["portrait", "landscape", "auto"].includes(
+      getSetting("posterLayout") ?? "",
+    )
+      ? getSetting("posterLayout")
+      : DEFAULTS.posterLayout) as AppSettings["posterLayout"],
+    rowDensity: (["compact", "comfortable", "cinematic"].includes(
+      getSetting("rowDensity") ?? "",
+    )
+      ? getSetting("rowDensity")
+      : DEFAULTS.rowDensity) as AppSettings["rowDensity"],
+    preferBingeGroup:
+      getSetting("preferBingeGroup") === null
+        ? DEFAULTS.preferBingeGroup
+        : getSetting("preferBingeGroup") === "true",
+    catalogNameOverrides: getSetting("catalogNameOverrides") ?? DEFAULTS.catalogNameOverrides,
   };
 }
 
@@ -1384,6 +1426,24 @@ export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.customBackgroundImageBlur !== undefined) {
     setSetting("customBackgroundImageBlur", String(patch.customBackgroundImageBlur));
+  }
+  if (patch.autoplayTrailers !== undefined) {
+    setSetting("autoplayTrailers", patch.autoplayTrailers ? "true" : "false");
+  }
+  if (patch.posterScale !== undefined) {
+    setSetting("posterScale", patch.posterScale);
+  }
+  if (patch.posterLayout !== undefined) {
+    setSetting("posterLayout", patch.posterLayout);
+  }
+  if (patch.rowDensity !== undefined) {
+    setSetting("rowDensity", patch.rowDensity);
+  }
+  if (patch.preferBingeGroup !== undefined) {
+    setSetting("preferBingeGroup", patch.preferBingeGroup ? "true" : "false");
+  }
+  if (patch.catalogNameOverrides !== undefined) {
+    setSetting("catalogNameOverrides", patch.catalogNameOverrides);
   }
   return getAppSettings();
 }

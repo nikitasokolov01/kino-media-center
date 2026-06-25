@@ -196,6 +196,8 @@ export default function HomeHero({ descriptors, forcedDescriptor }: Props) {
   const item = items[activeIdx];
   // Prefer landscape background; fall back to portrait poster
   const bgUrl = item.background ?? item.poster;
+  // Logo/clearlogo art when the addon provides it; falls back to text title.
+  const logoUrl = typeof item.logo === "string" && item.logo.length > 0 ? item.logo : null;
   const genres = item.genres?.slice(0, 3).join(" · ") ?? null;
   const yearInfo = item.releaseInfo ?? (item.year != null ? String(item.year) : null);
 
@@ -230,7 +232,24 @@ export default function HomeHero({ descriptors, forcedDescriptor }: Props) {
       {/* Text content */}
       <div className={`home-hero__content${transitionClass}`}>
         {genres && <p className="home-hero__genres">{genres}</p>}
-        <h2 className="home-hero__title">{item.name}</h2>
+        {logoUrl ? (
+          <img
+            className="home-hero__logo"
+            src={logoUrl}
+            alt={item.name}
+            draggable={false}
+            onError={(e) => {
+              // If the logo fails, swap to a text title so the hero never looks empty.
+              const img = e.currentTarget as HTMLImageElement;
+              img.style.display = "none";
+              const h = img.nextElementSibling as HTMLElement | null;
+              if (h) h.style.display = "";
+            }}
+          />
+        ) : null}
+        <h2 className="home-hero__title" style={logoUrl ? { display: "none" } : undefined}>
+          {item.name}
+        </h2>
         {yearInfo && <p className="home-hero__meta">{yearInfo}</p>}
         {item.description && (
           <p className="home-hero__desc">{item.description}</p>

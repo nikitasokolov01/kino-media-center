@@ -149,7 +149,10 @@ export interface StremioMeta {
   language?: string;
   awards?: string;
   website?: string;
-  trailers?: unknown[];
+  /** Legacy trailer array: [{ source: "<ytId>", type: "Trailer" }]. */
+  trailers?: Array<{ source?: string; type?: string; ytId?: string; url?: string; title?: string }>;
+  /** Modern trailer array used by Cinemeta etc.: [{ title, ytId }]. */
+  trailerStreams?: Array<{ title?: string; ytId?: string; url?: string }>;
   videos?: StremioMetaVideo[];
   links?: Array<{
     name: string;

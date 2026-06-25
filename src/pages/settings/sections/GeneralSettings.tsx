@@ -9,13 +9,17 @@ export default function GeneralSettings() {
   const { settings, update } = useSettings();
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  async function handleDefaultPlayerChange(v: DefaultPlayerSetting) {
+  async function saveSetting(patch: Parameters<typeof update>[0]) {
     setSaveError(null);
     try {
-      await update({ defaultPlayer: v });
+      await update(patch);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  async function handleDefaultPlayerChange(v: DefaultPlayerSetting) {
+    await saveSetting({ defaultPlayer: v });
   }
 
   return (
@@ -56,6 +60,31 @@ export default function GeneralSettings() {
             </label>
           ))}
         </div>
+      </section>
+
+      <section className="settings-section">
+        <h3 className="settings-section__label">Media detail</h3>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={settings.autoplayTrailers}
+            onChange={(e) =>
+              void saveSetting({ autoplayTrailers: e.target.checked })
+            }
+          />
+          <span>
+            Autoplay trailers in hero
+            <span className="muted small">
+              {" "}
+              -- when a movie or show has a trailer, play it muted behind the
+              detail hero. Use "Watch Trailer" to expand it with audio.
+            </span>
+          </span>
+        </label>
+        <p className="muted small">
+          Trailer audio default: muted for preview. Audio is only enabled when
+          you expand the trailer.
+        </p>
       </section>
     </div>
   );

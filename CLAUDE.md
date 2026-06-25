@@ -751,3 +751,175 @@ Motion: --motion-fast (120ms), --motion-med (220ms), --ease-standard
 7. Media hero is full-bleed + gradient overlay -- no border-bottom.
 8. Catalog strips use padding: 0 var(--page-padding) for consistent alignment.
 9. No over-rounded pills, no rainbow gradients, no excessive glassmorphism, no emoji icons.
+## 15. UX & Discovery Feature Pass (sprint)
+
+A multi-phase UX/feature sprint on the `experiment/libmpv-native` branch. All
+additive; external MPV, the native embedded addon, profiles, library, progress,
+and Continue Watching are untouched. No debrid/torrent logic, no persisted raw
+stream URLs.
+
+### New app_settings keys
+- `autoplayTrailers: boolean` (default true) -- autoplay a muted trailer in the
+  media detail hero.
+- `posterScale: "compact" | "normal" | "large" | "xlarge"` (default "normal").
+- `posterLayout: "portrait" | "landscape" | "auto"` (default "portrait").
+- `rowDensity: "compact" | "comfortable" | "cinematic"` (default "comfortable").
+- `preferBingeGroup: boolean` (default true) -- next-episode prefers the same
+  source group/family before normal auto-selection.
+All wired through the four layers: `src/core/player/types.ts` (AppSettings),
+`electron/db.ts` (interface + DEFAULTS + getAppSettings + updateAppSettings),
+`src/state/SettingsContext.tsx` (FALLBACK). Settings IPC is generic (get/update
+the whole object) so no new channels were needed.
+
+### PlayRequest additions (`src/core/player/types.ts`)
+- `background?: string`, `logo?: string` -- feed the cinematic loading overlay.
+- `bingeGroup?: string` -- chosen stream's behaviorHints.bingeGroup, used by the
+  next-episode affinity comparison.
+
+### Trailers (Phase 1)
+- `src/core/stremio/trailer.ts` -- `getTrailerInfo(meta)` extracts a trailer from
+  `meta.trailerStreams` (`[{title, ytId}]`), legacy `meta.trailers`
+  (`[{source,type}]`), or trailer-category `meta.links`. Returns a YouTube or
+  direct-URL descriptor. Also `youTubeEmbedUrl()` / `youTubeWatchUrl()`. No single
+  provider hardcoded. `StremioMeta.trailers` / `trailerStreams` now typed.
+- `src/components/MediaTrailer.tsx` -- muted, looping hero preview (delayed ~1.4s,
+  paused off-screen via IntersectionObserver) + "Watch Trailer" expand modal with
+  play/pause, mute/unmute, fullscreen, close, and "open in browser". Direct URLs
+  use `<video>`; YouTube uses a youtube-nocookie iframe driven by the IFrame
+  postMessage API. Audio is never auto-enabled (preview always muted).
+- `MediaPage` renders `<MediaTrailer>` in the hero; "Autoplay trailers in hero"
+  toggle lives in Settings -> General.
+
+### Posters / Cards (Phase 2)
+- CSS variables on `<html>` set by `ThemeProvider` Effect 8: `--poster-scale`,
+  `--poster-width`, `--poster-aspect-ratio`, `--media-card-gap`, plus a
+  `data-poster-layout` attribute. Cards across Home rows, Library grid, Search,
+  Continue Watching, and Next Up read these.
+- `CatalogItem` chooses the backdrop image for landscape/auto (poster fallback)
+  and tags itself `catalog-item--landscape` / `--portrait`.
+- UI: Settings -> Appearance -> "Posters / Cards" (segmented controls).
+
+### Live search dropdown (Phase 3)
+- `src/core/catalog/search.ts` -- shared `searchTargetsForAddons()` +
+  `runAddonSearch()` (dedupe, first-seen order, cancel-safe).
+- `src/features/search/useSearchSuggestions.ts` -- debounced (250ms) hook,
+  latest-query-wins via request-id ref, capped at 8.
+- `src/components/NavSearch.tsx` -- input + dropdown (poster/title/type/year),
+  arrow-key nav, Enter opens highlighted or full /search, Esc/outside close.
+  `TopNav` renders `<NavSearch>`. Full /search route unchanged.
+
+### Discover page (Phase 4)
+- Route `/discover` (App.tsx) + navbar link (TopNav). `src/pages/DiscoverPage.tsx`.
+- Filters built entirely from installed-addon catalog capabilities: Type,
+  Catalog/source, Genre (when declared), Year (declared options or generated
+  range). Skip-based pagination, no stream fetch, results open media detail.
+  Last filters persisted in localStorage (`kino.discover.filters`).
+- New catalog helpers in `src/core/stremio/catalog.ts`: `catalogSupportsExtra`,
+  `getCatalogExtraOptions`, `catalogRequiresExtra`.
+
+### Drag-scroll rows + hidden scrollbars (Phase 5)
+- `src/features/ui/useDragScroll.ts` -- callback-ref hook: click-drag to scroll,
+  6px drag-vs-click threshold, click suppression after drag, ignores form
+  controls. Applied to `.catalog-row__strip` in CatalogRow, ContinueWatchingRow,
+  LibraryRecentRow. CSS hides the horizontal scrollbar and adds grab/grabbing
+  cursors. Trackpad/wheel/keyboard and vertical scroll unaffected.
+
+### Non-selectable chrome (Phase 6)
+- `body { user-select: none }`, re-enabled for inputs/textareas/select/
+  contenteditable/code/pre/kbd, `.about-table`, error/warning banners,
+  `.failure-list`, `.media-detail__description`, and a `.selectable` utility.
+
+### Cinematic loading overlay (Phase 7)
+- `EmbeddedPlayerOverlay` replaces the plain spinner with a cinematic layer
+  (`.emb-cine`): blurred ken-burns backdrop (req.background || req.poster), dark
+  scrim, title logo or text with subtle pulse, episode subtitle, and a status
+  line stepping through Finding sources / Choosing source / Starting player /
+  Loading source / Buffering. Hidden once the first frame is painted
+  (`running && stats.drawn > 0` -- no native code touched). Error/unavailable
+  panels and the source picker render above it; manual mode shows "Choose a
+  source". `prefers-reduced-motion` disables the zoom/pulse. The simple spinner
+  class is reused as the fallback.
+
+### Prefer binge group (Phase 8)
+- `sourceAffinity.ts` adds a `bingeGroup` signal (weight 60, decisive) and a
+  `preferGroup` gate on `chooseNextEpisodeSource()`. When the setting is off it
+  returns the normal quality-ranked best source. The overlay tracks the actually
+  playing stream (`playingStreamRef` + addon id) and carries `bingeGroup` through
+  manual source changes and episode transitions. Toggle in Settings -> Player ->
+  Source Selection.
+
+### Build / line-ending note
+The Edit/Write tools both truncate files mid-content AND convert CRLF->LF on this
+repo. ALL edits this sprint were done via Python byte-level ops (read, str
+replace, write CRLF) and `styles.css` via bash heredoc + Python. Verify changes
+with `tsc` (renderer `tsconfig.json` + `electron/tsconfig.json`); the full vite
+bundle (`npm run build`) must be run on Windows since `node_modules` carries the
+platform-native rollup binary.
+## 16. UX Bug-fix / Polish Pass (sprint)
+
+Follow-up polish on the section-15 feature sprint (branch `experiment/libmpv-native`).
+Additive/CSS-and-settings only. Native MPV, playback, source selection, trailers,
+Continue Watching, profiles, themes, and addon installation untouched. Verified
+with `tsc` (renderer + electron) -- both clean.
+
+### Drag scrolling (fix)
+- `src/features/ui/useDragScroll.ts`: suppress native image/link drag via a
+  `dragstart` preventer; clean up drag state on pointerup, pointercancel,
+  lostpointercapture, and window blur (previously a native link/image drag could
+  cancel the pointer stream and leave the row stuck in drag mode). Cleanup ref
+  also clears `is-grabbing` + the `dragged` flag on unmount.
+- `CatalogItem.tsx`, `ContinueWatchingRow.tsx`, `LibraryRecentRow.tsx`:
+  `draggable={false}` on card links and poster images.
+- `styles.css`: cursor is `grab/grabbing` only while dragging (default otherwise);
+  `-webkit-user-drag: none` extended from images to the card links/cards.
+
+### Trailer controls flash (fix)
+- `MediaTrailer.tsx`: hero preview `<video>` is explicitly `controls={false}`
+  + `disablePictureInPicture`.
+- `styles.css`: `::-webkit-media-controls*` hidden on `.media-trailer__preview-media`
+  so native controls never flash before CSS applies; preview is `pointer-events:none`.
+
+### Home hero (taller + logo art)
+- `styles.css`: hero height raised ~25% to `clamp(475px, 65vw, 825px)`.
+- `HomeHero.tsx`: uses `item.logo` (clearlogo) when present with a readable
+  drop-shadow; falls back to the text title (also on image load error).
+- New `.home-hero__logo` styles (left/bottom aligned, contained, shadowed).
+
+### Poster scale slider (Settings -> Appearance)
+- `AppearanceSettings.tsx`: replaced the 4 scale buttons with a themed 4-step
+  range slider (`.kino-slider`) mapping 1..4 -> compact/normal/large/xlarge, with
+  the current label shown beside it. Existing stored value migrates by index.
+
+### Poster layout visual buttons
+- `AppearanceSettings.tsx`: replaced text layout buttons with `.poster-layout-card`
+  buttons showing inline SVG orientation shapes (tall poster / wide 16:9 /
+  mixed-auto) plus labels; selected state uses the accent.
+
+### Catalog/category rename + clean labels
+- New `src/core/catalog/catalogNames.ts`: stable override key
+  `addonId::type::catalogId`; `parseCatalogOverrides` / `serializeCatalogOverrides`;
+  `resolveCatalogName`; `resolveCatalogDisplayNames` (applies overrides + hides
+  addon/provider names, disambiguating only when two visible catalogs collapse to
+  the same name -- subtle ` (addonName)` suffix on the conflicting ones only).
+- New app_setting `catalogNameOverrides: string` (JSON map; default "{}"); wired
+  through all four layers (types, db, SettingsContext). Global (settings are not
+  profile-scoped). Internal catalog IDs / addon requests are never altered.
+- `AppearanceSettings.tsx`: "Category names" section lists every installed-addon
+  catalog with a rename input (commit on blur/Enter), per-row Reset (enabled only
+  when overridden), and Reset-all. Addon/provider names are shown HERE for
+  reference (Settings/debug are allowed to show them).
+- Applied in `HomePage.tsx` (rows), `DiscoverPage.tsx` (filter dropdown),
+  `ExpandedCatalogPage.tsx` (title). `CatalogRow.tsx` no longer renders the addon
+  name (shows the catalog type only); ExpandedCatalog meta no longer shows the
+  addon name. Addon names remain in Settings/About and the playback source picker.
+
+### Home row margin alignment
+- Confirmable issue: home rows were double-padded -- `.home-page` (`.page`) adds
+  `var(--page-padding)` AND each row's `.catalog-row__header` + `.catalog-row__strip`
+  added it again (64px), while the rest of the app's browse grids sit at 32px.
+- `styles.css`: scoped `.home-shelves .catalog-row__header` / `__strip` horizontal
+  padding to 0 so all home rows share one consistent inset equal to the page
+  padding. The hero is untouched (keeps its negative-margin full-bleed).
+- NOTE: a *first-three-rows-specific* asymmetry could not be reproduced from the
+  CSS (all home rows resolve to the same inset). If one persists at runtime, a
+  screenshot is needed to pin it down.

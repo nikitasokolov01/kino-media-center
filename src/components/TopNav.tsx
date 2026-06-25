@@ -1,7 +1,8 @@
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { NavLink } from "react-router-dom";
 import { useProfile } from "../state/ProfileContext.js";
 import KinoLogo from "./KinoLogo.js";
+import NavSearch from "./NavSearch.js";
 import ProfileAvatar from "./ProfileAvatar.js";
 import { MaximizeIcon, MinimizeIcon } from "./PlayerIcons.js";
 
@@ -64,16 +65,6 @@ function FullscreenButton() {
 
 export default function TopNav() {
   const { profile, clearActiveProfile } = useProfile();
-  const [query, setQuery] = useState("");
-  const navigate = useNavigate();
-
-  function handleSearch(e: FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q) return;
-    void navigate(`/search?q=${encodeURIComponent(q)}`);
-    setQuery("");
-  }
 
   if (!profile) return null;
 
@@ -101,6 +92,14 @@ export default function TopNav() {
               Home
             </NavLink>
             <NavLink
+              to="/discover"
+              className={({ isActive }) =>
+                isActive ? "top-nav__link top-nav__link--active" : "top-nav__link"
+              }
+            >
+              Discover
+            </NavLink>
+            <NavLink
               to="/library"
               className={({ isActive }) =>
                 isActive ? "top-nav__link top-nav__link--active" : "top-nav__link"
@@ -111,30 +110,8 @@ export default function TopNav() {
           </nav>
         </div>
 
-        {/* Center: search */}
-        <form className="top-nav__search" onSubmit={handleSearch} role="search">
-          <svg
-            className="top-nav__search-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-          <input
-            className="top-nav__search-input"
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search movies, shows, anime..."
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </form>
+        {/* Center: search with live suggestions dropdown */}
+        <NavSearch />
 
         {/* Right: fullscreen + settings + profile */}
         <div className="top-nav__right">

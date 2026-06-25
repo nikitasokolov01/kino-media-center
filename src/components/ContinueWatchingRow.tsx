@@ -12,6 +12,7 @@ import { useProfile } from "../state/ProfileContext.js";
 import { useLibrary } from "../state/LibraryContext.js";
 import { useContextMenu } from "../state/ContextMenuContext.js";
 import { useToast } from "../state/ToastContext.js";
+import { useDragScroll } from "../features/ui/useDragScroll.js";
 import { formatTime } from "../features/player/playability.js";
 import type { WatchProgress } from "../types/preload.js";
 
@@ -34,6 +35,7 @@ export default function ContinueWatchingRow() {
   const { openContextMenu } = useContextMenu();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const stripRef = useDragScroll<HTMLDivElement>();
   const [items, setItems] = useState<WatchProgress[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -106,7 +108,7 @@ export default function ContinueWatchingRow() {
       <header className="catalog-row__header">
         <h2 className="catalog-row__title">Continue Watching</h2>
       </header>
-      <div className="catalog-row__strip">
+      <div className="catalog-row__strip" ref={stripRef}>
         {items.map((p) => {
           const to = `/media/${encodeURIComponent(p.type)}/${encodeURIComponent(p.mediaId)}`;
           const label = episodeLabel(p);
@@ -116,6 +118,7 @@ export default function ContinueWatchingRow() {
               to={to}
               className="cw-card"
               title={p.title}
+              draggable={false}
               onContextMenu={(e) => openMenu(e, p)}
             >
               <div className="cw-card__poster-wrap">
@@ -125,6 +128,7 @@ export default function ContinueWatchingRow() {
                     src={p.poster}
                     alt=""
                     loading="lazy"
+                    draggable={false}
                     onError={(e) => {
                       (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
                     }}

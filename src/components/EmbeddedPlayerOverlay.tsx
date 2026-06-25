@@ -173,6 +173,10 @@ export default function EmbeddedPlayerOverlay() {
   const [showNextEpPrompt, setShowNextEpPrompt] = useState(false);
   /** Transitioning to next episode — prevents double-click. */
   const [transitioning, setTransitioning] = useState(false);
+  /** The actual stream currently playing (for next-episode affinity). */
+  const playingStreamRef = useRef<StremioStream | null>(null);
+  /** Addon id that provided the currently playing stream. */
+  const playingAddonIdRef = useRef<string>("");
 
   // ---- In-player source picker state (Part 5) ----------------------------
 
@@ -237,6 +241,10 @@ export default function EmbeddedPlayerOverlay() {
     let cancelled = false;
 
     const doStart = async () => {
+      // The resolved stream + addon for this playback (set in the player-first
+      // branch, used to seed the next-episode affinity comparison).
+      let chosenStream: StremioStream | null = null;
+      let chosenAddonId = "";
       // 0. Record pre-play fullscreen state, then go fullscreen.
       try {
         const alreadyFullscreen = await window.mediaCenter.system.getFullscreen();
@@ -372,6 +380,8 @@ export default function EmbeddedPlayerOverlay() {
           }
           resolvedUrl = best.stream.url;
           setCurrentSourceKey(best.key);
+          chosenStream = best.stream;
+          chosenAddonId = best.source.addonId;
           // Persist this source as the preferred one for next time.
           void window.mediaCenter.sourcePref
             .save({
@@ -394,6 +404,16 @@ export default function EmbeddedPlayerOverlay() {
         if (cancelled) return;
         setFetchStatus(null);
       }
+
+      // Record the stream now playing so the next-episode pipeline can score
+      // source-group affinity (incl. bingeGroup) against it.
+      playingStreamRef.current = chosenStream ?? {
+        url: resolvedUrl,
+        name: req.streamName,
+        title: req.streamTitle,
+        behaviorHints: req.bingeGroup ? { bingeGroup: req.bingeGroup } : undefined,
+      };
+      playingAddonIdRef.current = chosenAddonId;
 
       // 4. Build progress context + start playback.
       const ctx: EmbeddedProgressContext = {
@@ -487,16 +507,19 @@ export default function EmbeddedPlayerOverlay() {
         const cached = getCachedSources(cacheKey);
         if (cached !== null) {
           // Sources arrived — pick the best using affinity scoring.
-          const currentStream: StremioStream = {
-            url: req.streamUrl,
-            name: req.streamName,
-            title: req.streamTitle,
-          };
+          const currentStream: StremioStream =
+            playingStreamRef.current ?? {
+              url: req.streamUrl,
+              name: req.streamName,
+              title: req.streamTitle,
+              behaviorHints: req.bingeGroup ? { bingeGroup: req.bingeGroup } : undefined,
+            };
           const best = chooseNextEpisodeSource(
             currentStream,
-            "", // addonId unknown from PlayRequest; affinity uses other signals
+            playingAddonIdRef.current,
             cached,
             settings,
+            settings.preferBingeGroup,
           );
           if (!cancelled) {
             setNextSource(best);
@@ -689,6 +712,7 @@ export default function EmbeddedPlayerOverlay() {
         streamUrl: result.stream.url ?? "",
         streamTitle: result.stream.title,
         streamName: result.stream.name,
+        bingeGroup: result.stream.behaviorHints?.bingeGroup,
         pendingSourceFetch: false,
       };
       setEmbeddedPlayRequest(newReq);
@@ -715,9 +739,12 @@ export default function EmbeddedPlayerOverlay() {
       season: nextEpisode.season ?? undefined,
       episode: nextEpisode.episode ?? undefined,
       poster: req.poster,
+      background: req.background,
+      logo: req.logo,
       streamUrl: nextSource.stream.url ?? "",
       streamTitle: nextSource.stream.title,
       streamName: nextSource.stream.name,
+      bingeGroup: nextSource.stream.behaviorHints?.bingeGroup,
     };
     // Dispatch to the store — the overlay's lifecycle effect will stop the
     // current session (including progress flush) and start the new one.
@@ -1148,6 +1175,26 @@ export default function EmbeddedPlayerOverlay() {
                 ? "Paused"
                 : "Playing";
 
+  // ---- Cinematic loading overlay (Phase 7) --------------------------------
+  // Shown from the moment the overlay opens until the first video frame is
+  // painted (stats.drawn > 0). Error and source-picker panels render above it.
+  const firstFrameReady = running && (stats?.drawn ?? 0) > 0;
+  const showCinematic = !firstFrameReady;
+  const cinematicBg = req?.background || req?.poster || "";
+  const cinematicError = !!error || !available || fetchStatus === "error-fetch";
+  const manualWaiting =
+    !!req?.manualSourceSelect && sourcePanelOpen && !running && !starting && fetchStatus === null;
+  const phaseText =
+    fetchStatus === "finding"
+      ? "Finding sources..."
+      : fetchStatus === "choosing"
+        ? "Choosing source..."
+        : starting
+          ? "Starting player..."
+          : running
+            ? "Buffering..."
+            : "Loading source...";
+
   // ---- Render --------------------------------------------------------------
 
   if (!req) return null;
@@ -1203,12 +1250,40 @@ export default function EmbeddedPlayerOverlay() {
       >
         <canvas ref={canvasRef} className="emb-overlay__canvas" />
 
-        {/* Loading indicator: visible during ALL pre-ready phases
-             (source resolution, native start, waiting for first frame). */}
-        {showLoadingIndicator && (
-          <div className="emb-overlay__loading-indicator">
-            <div className="emb-overlay__spinner" />
-            <span className="emb-overlay__loading-text">{loadingText}</span>
+        {/* Cinematic loading overlay: backdrop + logo/title + status phases,
+             shown until the first video frame is painted. Error/source panels
+             render above it. The simple spinner class is reused underneath. */}
+        {showCinematic && (
+          <div className="emb-cine">
+            {cinematicBg && (
+              <div
+                className="emb-cine__bg"
+                style={{ backgroundImage: `url("${cinematicBg.replace(/"/g, "\\\"")}")` }}
+              />
+            )}
+            <div className="emb-cine__scrim" />
+            <div className="emb-cine__content">
+              {req.logo ? (
+                <img className="emb-cine__logo" src={req.logo} alt={req.mediaTitle} />
+              ) : (
+                <h2 className="emb-cine__title">{req.mediaTitle}</h2>
+              )}
+              {req.episodeTitle && (
+                <div className="emb-cine__subtitle">{req.episodeTitle}</div>
+              )}
+              {!cinematicError && (
+                <div className="emb-cine__status">
+                  {manualWaiting ? (
+                    <span className="emb-cine__status-text">Choose a source</span>
+                  ) : (
+                    <>
+                      <span className="emb-overlay__spinner emb-cine__spinner" />
+                      <span className="emb-cine__status-text">{phaseText}</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

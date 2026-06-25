@@ -42,6 +42,8 @@ export interface SourceAffinity {
   hdr: string | null;
   /** True when season-pack indicators are present ("S01", "Complete", etc.). */
   seasonPack: boolean;
+  /** Stremio behaviorHints.bingeGroup -- the canonical same-release marker. */
+  bingeGroup: string | null;
 }
 
 /** Build a SourceAffinity profile from a stream + its addon id. */
@@ -94,6 +96,11 @@ export function extractSourceAffinity(
   const seasonPack =
     /\b(complete|season[\s.]?\d+|s0?\d+(?!e\d))\b/i.test(text);
 
+  const bingeGroup =
+    typeof stream.behaviorHints?.bingeGroup === "string"
+      ? stream.behaviorHints.bingeGroup
+      : null;
+
   return {
     addonId,
     streamName: stream.name ?? null,
@@ -104,6 +111,7 @@ export function extractSourceAffinity(
     codec,
     hdr,
     seasonPack,
+    bingeGroup,
   };
 }
 
@@ -120,6 +128,7 @@ const WEIGHT_QUALITY     = 10; // same resolution
 const WEIGHT_CODEC       =  5; // same codec
 const WEIGHT_HDR         =  5; // same HDR
 const WEIGHT_SEASON_PACK = 10; // candidate looks like a season pack
+const WEIGHT_BINGE_GROUP = 60; // identical bingeGroup => same release (decisive)
 
 /** Minimum cumulative affinity score to prefer over quality-ranked fallback. */
 export const AFFINITY_THRESHOLD = 25;
@@ -185,6 +194,14 @@ export function scoreNextEpisodeSource(
     score += WEIGHT_SEASON_PACK;
     reasons.push("season-pack");
   }
+  if (
+    current.bingeGroup &&
+    candidate.bingeGroup &&
+    candidate.bingeGroup === current.bingeGroup
+  ) {
+    score += WEIGHT_BINGE_GROUP;
+    reasons.push("same-binge-group");
+  }
 
   return { score, reasons };
 }
@@ -205,14 +222,24 @@ export function scoreNextEpisodeSource(
  * @param currentAddonId The addon that provided the current stream (may be "" if unknown).
  * @param candidates     Source list for the next episode (from the prefetch cache).
  * @param settings       Quality ranking settings (same as used for auto-select).
+ * @param preferGroup    When false, skip affinity scoring entirely and use the
+ *                       normal quality-ranked best source (the "Prefer same
+ *                       source group" setting controls this).
  */
 export function chooseNextEpisodeSource(
   currentStream: StremioStream,
   currentAddonId: string,
   candidates: StreamSourceResult[],
   settings: RankingOptions,
+  preferGroup: boolean = true,
 ): StreamSourceResult | null {
   if (candidates.length === 0) return null;
+
+  // Setting off: behave like normal auto-select (no same-group preference).
+  if (!preferGroup) {
+    if (isDev) console.log("[affinity] preferGroup off -- using best-source ranking");
+    return chooseBestSource(candidates, settings);
+  }
 
   const currentAffinity = extractSourceAffinity(currentStream, currentAddonId);
 

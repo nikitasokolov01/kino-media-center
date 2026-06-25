@@ -7,6 +7,7 @@ import { useSettings } from "../../../state/SettingsContext.js";
 import { useProfile } from "../../../state/ProfileContext.js";
 import { BUILT_IN_THEMES, ACCENT_PRESETS } from "../../../theme/themes.js";
 import { catalogRequiresExtras } from "../../../core/stremio/catalog.js";
+import { catalogOverrideKey, parseCatalogOverrides, serializeCatalogOverrides } from "../../../core/catalog/catalogNames.js";
 import CustomThemeBuilder from "./CustomThemeBuilder.js";
 import type { AddonRow } from "../../../types/preload.js";
 import type { StremioCatalog } from "../../../core/stremio/types.js";
@@ -39,6 +40,26 @@ const BG_POS_OPTIONS = [
   { id: "center", label: "Center" },
   { id: "top",    label: "Top"    },
   { id: "bottom", label: "Bottom" },
+] as const;
+
+// Poster / card sizing + layout (Phase 2)
+const POSTER_SCALE_OPTIONS = [
+  { id: "compact", label: "Compact" },
+  { id: "normal",  label: "Normal" },
+  { id: "large",   label: "Large" },
+  { id: "xlarge",  label: "Extra Large" },
+] as const;
+
+const POSTER_LAYOUT_OPTIONS = [
+  { id: "portrait",  label: "Portrait" },
+  { id: "landscape", label: "Landscape" },
+  { id: "auto",      label: "Auto" },
+] as const;
+
+const ROW_DENSITY_OPTIONS = [
+  { id: "compact",     label: "Compact" },
+  { id: "comfortable", label: "Comfortable" },
+  { id: "cinematic",   label: "Cinematic" },
 ] as const;
 
 // Catalog descriptor shape (mirrors HomePage.tsx, used for hero source selection)
@@ -107,6 +128,28 @@ export default function AppearanceSettings() {
   }, [profile]);
 
   const heroCatalogOptions = useMemo(() => catalogOptionsFromAddons(heroAddons), [heroAddons]);
+
+  // --- Category/catalog rename overrides ---
+  const catOverrides = useMemo(
+    () => parseCatalogOverrides(settings.catalogNameOverrides),
+    [settings.catalogNameOverrides],
+  );
+  const [catNameDrafts, setCatNameDrafts] = useState<Record<string, string>>({});
+  function commitCatName(addonId: string, type: string, catalogId: string, originalName: string, value: string) {
+    const key = catalogOverrideKey(addonId, type, catalogId);
+    const next = { ...catOverrides };
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === originalName) delete next[key];
+    else next[key] = trimmed;
+    setCatNameDrafts((d) => { const c = { ...d }; delete c[key]; return c; });
+    void save({ catalogNameOverrides: serializeCatalogOverrides(next) });
+  }
+  function resetCatName(addonId: string, type: string, catalogId: string) {
+    const key = catalogOverrideKey(addonId, type, catalogId);
+    const next = { ...catOverrides }; delete next[key];
+    setCatNameDrafts((d) => { const c = { ...d }; delete c[key]; return c; });
+    void save({ catalogNameOverrides: serializeCatalogOverrides(next) });
+  }
 
   // Current hero catalog selection (combined key: "addonId:type:catalogId")
   const heroCatalogKey = settings.heroAddonId && settings.heroCatalogType && settings.heroCatalogId
@@ -433,6 +476,153 @@ export default function AppearanceSettings() {
             );
           })}
         </div>
+      </section>
+
+      {/* --- C2. Posters / Cards (Phase 2) --- */}
+      <section className="settings-section">
+        <h3 className="settings-section__label">Posters / Cards</h3>
+        <p className="muted small">
+          Controls the size and shape of media cards across Home, Library,
+          Search, and Continue Watching. Changes apply immediately.
+        </p>
+
+        <div className="setting-row">
+          <span className="field-label">Poster scale</span>
+          <div className="poster-scale-slider">
+            <input
+              type="range"
+              className="kino-slider"
+              min={1}
+              max={4}
+              step={1}
+              value={(POSTER_SCALE_OPTIONS.findIndex((o) => o.id === settings.posterScale) + 1) || 2}
+              onChange={(e) => {
+                const opt = POSTER_SCALE_OPTIONS[Number(e.target.value) - 1];
+                if (opt) void save({ posterScale: opt.id });
+              }}
+              aria-label="Poster scale"
+            />
+            <span className="poster-scale-slider__value">
+              {POSTER_SCALE_OPTIONS.find((o) => o.id === settings.posterScale)?.label ?? "Normal"}
+            </span>
+          </div>
+        </div>
+
+        <div className="setting-row setting-row--top">
+          <span className="field-label">Layout</span>
+          <div className="poster-layout-options">
+            {POSTER_LAYOUT_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={"poster-layout-card" + (settings.posterLayout === opt.id ? " poster-layout-card--active" : "")}
+                onClick={() => void save({ posterLayout: opt.id })}
+                title={opt.label}
+                aria-pressed={settings.posterLayout === opt.id}
+              >
+                <span className="poster-layout-card__art" aria-hidden="true">
+                  {opt.id === "portrait" && (
+                    <svg viewBox="0 0 48 34" width="48" height="34">
+                      <rect x="18" y="4" width="12" height="26" rx="2" />
+                    </svg>
+                  )}
+                  {opt.id === "landscape" && (
+                    <svg viewBox="0 0 48 34" width="48" height="34">
+                      <rect x="5" y="10" width="38" height="14" rx="2" />
+                    </svg>
+                  )}
+                  {opt.id === "auto" && (
+                    <svg viewBox="0 0 48 34" width="48" height="34">
+                      <rect x="5" y="4" width="11" height="26" rx="2" />
+                      <rect x="20" y="10" width="23" height="14" rx="2" />
+                    </svg>
+                  )}
+                </span>
+                <span className="poster-layout-card__label">{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="muted small">
+          Landscape uses 16:9 backdrop cards (falls back to the poster when no
+          backdrop exists). Auto uses landscape where a backdrop is available,
+          portrait otherwise.
+        </p>
+
+        <div className="setting-row">
+          <span className="field-label">Row density</span>
+          <div className="settings-seg">
+            {ROW_DENSITY_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={"settings-seg__btn" + (settings.rowDensity === opt.id ? " settings-seg__btn--active" : "")}
+                onClick={() => void save({ rowDensity: opt.id })}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* --- C3. Category names (rename overrides) --- */}
+      <section className="settings-section">
+        <h3 className="settings-section__label">Category names</h3>
+        <p className="muted small">
+          Rename addon-provided catalogs. Custom names appear on Home, Discover,
+          and category rows. Provider names are shown here for reference only.
+        </p>
+        {heroCatalogOptions.length === 0 ? (
+          <p className="muted small">No catalogs found. Install an addon first.</p>
+        ) : (
+          <>
+            <div className="cat-rename-list">
+              {heroCatalogOptions.map((c) => {
+                const key = catalogOverrideKey(c.addonId, c.type, c.catalogId);
+                const overridden = catOverrides[key] !== undefined;
+                const value =
+                  catNameDrafts[key] !== undefined ? catNameDrafts[key] : (catOverrides[key] ?? "");
+                return (
+                  <div className="cat-rename-row" key={c.key}>
+                    <div className="cat-rename-row__info">
+                      <span className="cat-rename-row__orig">{c.catalogName}</span>
+                      <span className="cat-rename-row__src muted small">{c.addonName} · {c.type}</span>
+                    </div>
+                    <input
+                      className="text-input cat-rename-row__input"
+                      type="text"
+                      placeholder={c.catalogName}
+                      value={value}
+                      onChange={(e) => setCatNameDrafts((d) => ({ ...d, [key]: e.target.value }))}
+                      onBlur={(e) => commitCatName(c.addonId, c.type, c.catalogId, c.catalogName, e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                    />
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={!overridden}
+                      onClick={() => resetCatName(c.addonId, c.type, c.catalogId)}
+                      title="Reset to original name"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            {Object.keys(catOverrides).length > 0 && (
+              <button
+                type="button"
+                className="ghost-button"
+                style={{ marginTop: 10 }}
+                onClick={() => { setCatNameDrafts({}); void save({ catalogNameOverrides: "{}" }); }}
+              >
+                Reset all category names
+              </button>
+            )}
+          </>
+        )}
       </section>
 
       {/* --- D. Background Style --- */}

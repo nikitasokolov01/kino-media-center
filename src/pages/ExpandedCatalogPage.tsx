@@ -21,8 +21,10 @@ import {
 } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useProfile } from "../state/ProfileContext.js";
+import { useSettings } from "../state/SettingsContext.js";
 import CatalogItem from "../components/CatalogItem.js";
 import { catalogSupportsSkip } from "../core/stremio/catalog.js";
+import { resolveCatalogName, parseCatalogOverrides } from "../core/catalog/catalogNames.js";
 import type {
   StremioCatalog,
   StremioCatalogItem,
@@ -62,6 +64,7 @@ export default function ExpandedCatalogPage() {
   const catalogId = decodeURIComponent(params.catalogId ?? "");
 
   const { profile, loading: profileLoading } = useProfile();
+  const { settings } = useSettings();
 
   // ----- Addon resolution ---------------------------------------------------
   const [addon, setAddon] = useState<AddonRow | null>(null);
@@ -106,8 +109,10 @@ export default function ExpandedCatalogPage() {
     [catalogDef],
   );
 
-  const catalogName =
-    catalogDef?.name ?? `${type} · ${catalogId}`;
+  const catalogName = resolveCatalogName(
+    { addonId, type, catalogId, originalName: catalogDef?.name ?? `${type} · ${catalogId}` },
+    parseCatalogOverrides(settings.catalogNameOverrides),
+  );
 
   // ----- Pagination state ---------------------------------------------------
   const [items, setItems] = useState<StremioCatalogItem[]>([]);
@@ -230,20 +235,12 @@ export default function ExpandedCatalogPage() {
       <header className="catalog-page__header">
         <h1 className="catalog-page__title">{catalogName}</h1>
         <div className="catalog-page__meta">
-          {addon ? (
+          <span>{type}</span>
+          {addon && !supportsSkip && (
             <>
-              <span>{addon.manifest.name}</span>
               <span className="dot">·</span>
-              <span>{type}</span>
-              {!supportsSkip && (
-                <>
-                  <span className="dot">·</span>
-                  <span className="muted">single page (skip not supported)</span>
-                </>
-              )}
+              <span className="muted">single page (skip not supported)</span>
             </>
-          ) : (
-            <span className="muted">addon: {addonId}</span>
           )}
         </div>
       </header>
