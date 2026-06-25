@@ -101,6 +101,7 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
     posterScale,
     posterLayout,
     rowDensity,
+    spoilerBlurMode,
   } = settings;
 
   // 1. Apply data-theme attribute
@@ -294,6 +295,17 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
     root.style.setProperty("--poster-aspect-ratio", aspect);
     root.setAttribute("data-poster-layout", posterLayout || "portrait");
   }, [posterScale, posterLayout, rowDensity]);
+
+  // Effect 9: spoiler-blur mode -> data-spoiler-blur on <html>. CSS gates all
+  // blur behind this attribute, so "off" (default) never blurs anything.
+  useEffect(() => {
+    const mode = spoilerBlurMode || "off";
+    document.documentElement.setAttribute("data-spoiler-blur", mode);
+    if (import.meta.env?.DEV) {
+      // eslint-disable-next-line no-console
+      console.debug("[spoiler:attr]", { spoilerBlurMode, applied: mode });
+    }
+  }, [spoilerBlurMode]);
 
   return <>{children}</>;
 }

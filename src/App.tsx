@@ -8,7 +8,9 @@ import PlayerPage from "./pages/PlayerPage.js";
 import SettingsPage from "./pages/SettingsPage.js";
 import LibraryPage from "./pages/LibraryPage.js";
 import DiscoverPage from "./pages/DiscoverPage.js";
+import CollectionPage from "./pages/CollectionPage.js";
 import ProfilePicker from "./pages/ProfilePicker.js";
+import Onboarding from "./components/Onboarding.js";
 import ExperimentalEmbeddedPlayerPage from "./pages/ExperimentalEmbeddedPlayerPage.js";
 import EmbeddedPlayerOverlay from "./components/EmbeddedPlayerOverlay.js";
 import NowPlayingBar from "./components/NowPlayingBar.js";
@@ -40,8 +42,20 @@ export default function App() {
 
 function AppInner() {
   const { profile } = useProfile();
-  const { settings } = useSettings();
+  const { settings, loading: settingsLoading } = useSettings();
   const embeddedEnabled = settings.experimentalEmbeddedPlayer;
+
+  // Wait for settings before deciding onboarding, so we never flash the
+  // onboarding screen at users who have already completed it.
+  if (settingsLoading) {
+    return <div className="app-boot" aria-hidden="true" />;
+  }
+
+  // First-launch onboarding (fresh installs only; existing installs are
+  // migrated to completed in db.ts). Shown before the profile picker.
+  if (!settings.hasCompletedOnboarding) {
+    return <Onboarding />;
+  }
 
   // No active profile -> show the launch picker (Netflix-style).
   if (!profile) {
@@ -63,6 +77,7 @@ function AppInner() {
               path="/catalog/:addonId/:type/:catalogId"
               element={<ExpandedCatalogPage />}
             />
+            <Route path="/collection/:type/:id" element={<CollectionPage />} />
             <Route path="/media/:type/:id" element={<MediaPage />} />
             <Route path="/watch/:type/:id" element={<PlayerPage />} />
             <Route path="/settings" element={<SettingsPage />} />

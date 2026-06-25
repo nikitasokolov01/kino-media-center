@@ -4,9 +4,12 @@ import { useLibrary } from "../state/LibraryContext.js";
 import { useContextMenu } from "../state/ContextMenuContext.js";
 import { useToast } from "../state/ToastContext.js";
 import { useSettings } from "../state/SettingsContext.js";
+import { routeForCatalogItem, isCollectionContext, type CatalogContext } from "../core/stremio/collection.js";
 
 interface Props {
   item: StremioCatalogItem;
+  /** The catalog this item was browsed from (enables Collections detection). */
+  catalog?: CatalogContext;
 }
 
 function releaseLabel(item: StremioCatalogItem): string | null {
@@ -15,7 +18,7 @@ function releaseLabel(item: StremioCatalogItem): string | null {
   return null;
 }
 
-export default function CatalogItem({ item }: Props) {
+export default function CatalogItem({ item, catalog }: Props) {
   const navigate = useNavigate();
   const { isInLibrary, add, remove } = useLibrary();
   const { openContextMenu } = useContextMenu();
@@ -23,7 +26,22 @@ export default function CatalogItem({ item }: Props) {
   const { settings } = useSettings();
 
   const year = releaseLabel(item);
-  const to = `/media/${encodeURIComponent(item.type)}/${encodeURIComponent(item.id)}`;
+  const to = routeForCatalogItem(item, catalog);
+
+  // Dev-only: surface the runtime shape of items in a Collections catalog so
+  // collection detection can be verified/tuned. Logs only for collection
+  // catalogs, only in development.
+  if (import.meta.env?.DEV && isCollectionContext(catalog)) {
+    // eslint-disable-next-line no-console
+    console.debug("[collection-item]", {
+      id: item.id,
+      type: item.type,
+      name: item.name,
+      poster: item.poster,
+      route: to,
+      catalog,
+    });
+  }
   const inLib = isInLibrary(item.type, item.id);
 
   // Layout: portrait posters, landscape backdrops, or auto (landscape when a

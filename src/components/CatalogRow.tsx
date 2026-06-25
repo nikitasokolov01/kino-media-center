@@ -101,6 +101,20 @@ export default function CatalogRow({
     // Re-run when the addon config or profile changes (cacheKey encodes both).
   }, [cacheKey, manifestUrl, type, catalogId]);
 
+  // Dev-only diagnostic: log this catalog's identity + a sample item so the
+  // exact runtime shape (incl. Collections catalogs) can be verified.
+  useEffect(() => {
+    if (import.meta.env?.DEV && items.length > 0) {
+      const s = items[0];
+      // eslint-disable-next-line no-console
+      console.debug("[catalog-row]", {
+        addonId, addonName, catalogId, catalogName, type,
+        count: items.length,
+        sample: { id: s.id, type: s.type, name: s.name },
+      });
+    }
+  }, [items, addonId, addonName, catalogId, catalogName, type]);
+
   const seeAllHref = `/catalog/${encodeURIComponent(addonId)}/${encodeURIComponent(type)}/${encodeURIComponent(catalogId)}`;
 
   return (
@@ -141,7 +155,11 @@ export default function CatalogRow({
       {!loading && !error && items.length > 0 && (
         <div className="catalog-row__strip" ref={stripRef}>
           {items.map((it) => (
-            <CatalogItem key={`${it.type}:${it.id}`} item={it} />
+            <CatalogItem
+              key={`${it.type}:${it.id}`}
+              item={it}
+              catalog={{ addonId, catalogId, catalogName }}
+            />
           ))}
         </div>
       )}

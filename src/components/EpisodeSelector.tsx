@@ -19,6 +19,8 @@ import {
   type ReactNode,
 } from "react";
 import type { StremioVideo } from "../core/stremio/types.js";
+import { useSettings } from "../state/SettingsContext.js";
+import { pickEpisodeStill } from "../core/stremio/episodeImage.js";
 
 interface Props {
   videos: StremioVideo[];
@@ -58,6 +60,14 @@ interface Props {
    * Parent updates openSourcesForVideoId accordingly.
    */
   onToggleSources?: (videoId: string | null) => void;
+  /** Show backdrop/poster, used as a last-resort episode still fallback. */
+  showBackdrop?: string;
+  /**
+   * Initial season to select (e.g. from a Continue Watching deep-link). Used
+   * only as the default active season on first render when no episode is
+   * already selected. Falls back to the first season if it doesn't exist.
+   */
+  initialSeason?: number;
 }
 
 type SeasonKey = number | "specials" | "other";
@@ -145,7 +155,14 @@ export default function EpisodeSelector({
   playingEpisodeId,
   openSourcesForVideoId,
   onToggleSources,
+  showBackdrop,
+  initialSeason,
 }: Props) {
+  const { settings } = useSettings();
+  // Spoiler blur applies to UNWATCHED episode thumbnails ONLY in episodes/all.
+  const spoilerBlur =
+    settings.spoilerBlurMode === "episodes" || settings.spoilerBlurMode === "all";
+  const dbgLoggedRef = useRef(0);
   const groups = useMemo(() => groupBySeason(videos), [videos]);
   const watched = watchedIds ?? new Set<string>();
   const watchedCount = videos.filter((v) => watched.has(v.id)).length;
@@ -169,8 +186,13 @@ export default function EpisodeSelector({
         }
       }
     }
+    // Deep-link default: open on the requested season when it exists.
+    if (typeof initialSeason === "number") {
+      const g = groups.find((grp) => grp.key === initialSeason);
+      if (g) return String(g.key);
+    }
     return groups.length > 0 ? String(groups[0].key) : null;
-  }, [groups, selectedVideoId]);
+  }, [groups, selectedVideoId, initialSeason]);
 
   const [activeSeasonId, setActiveSeasonId] = useState<string | null>(
     initialSeasonId,
@@ -291,21 +313,44 @@ export default function EpisodeSelector({
                     title={`Play ${videoTitle(v)}`}
                   >
                     <div className="episode-item__thumb">
-                      {v.thumbnail ? (
-                        <img
-                          src={v.thumbnail}
-                          alt=""
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display =
-                              "none";
-                          }}
-                        />
-                      ) : (
-                        <div className="episode-item__thumb-placeholder" aria-hidden>
-                          {episodeLabel(v)}
-                        </div>
-                      )}
+                      {(() => {
+                        const pick = pickEpisodeStill(v, { showBackdrop });
+                        if (import.meta.env?.DEV && dbgLoggedRef.current < 3) {
+                          dbgLoggedRef.current += 1;
+                          const anyV = v as Record<string, unknown>;
+                          // eslint-disable-next-line no-console
+                          console.debug("[episode-still]", {
+                            id: v.id, season: v.season, episode: v.episode,
+                            title: v.title ?? v.name,
+                            fields: {
+                              thumbnail: anyV.thumbnail, still: anyV.still,
+                              image: anyV.image, screenshot: anyV.screenshot,
+                              poster: anyV.poster, background: anyV.background,
+                            },
+                            oldChosen: v.thumbnail,
+                            newChosen: pick.url,
+                            chosenField: pick.field,
+                            wasBlurredVariant: pick.wasBlurredVariant,
+                            spoilerBlurMode: settings.spoilerBlurMode,
+                            cssBlurApplied: spoilerBlur && !isWatched,
+                          });
+                        }
+                        return pick.url ? (
+                          <img
+                            src={pick.url}
+                            alt=""
+                            loading="lazy"
+                            className={spoilerBlur && !isWatched ? "poster--spoiler-blurred" : undefined}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="episode-item__thumb-placeholder" aria-hidden>
+                            {episodeLabel(v)}
+                          </div>
+                        );
+                      })()}
                       {/* Hover play overlay */}
                       <div className="episode-item__thumb-play" aria-hidden>
                         {playingEpisodeId === v.id ? (

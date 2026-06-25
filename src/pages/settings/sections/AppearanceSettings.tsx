@@ -62,6 +62,12 @@ const ROW_DENSITY_OPTIONS = [
   { id: "cinematic",   label: "Cinematic" },
 ] as const;
 
+const SPOILER_OPTIONS = [
+  { id: "off",      label: "Off" },
+  { id: "episodes", label: "Unwatched episodes" },
+  { id: "all",      label: "Everything unwatched" },
+] as const;
+
 // Catalog descriptor shape (mirrors HomePage.tsx, used for hero source selection)
 interface CatalogOption {
   key: string;
@@ -558,6 +564,30 @@ export default function AppearanceSettings() {
                 type="button"
                 className={"settings-seg__btn" + (settings.rowDensity === opt.id ? " settings-seg__btn--active" : "")}
                 onClick={() => void save({ rowDensity: opt.id })}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* --- C2b. Spoiler blur --- */}
+      <section className="settings-section">
+        <h3 className="settings-section__label">Spoiler blur</h3>
+        <p className="muted small">
+          Blur potential spoilers on unwatched content. Hover a poster to reveal
+          it. Collection grids and logos are never blurred. Default is off.
+        </p>
+        <div className="setting-row">
+          <span className="field-label">Blur</span>
+          <div className="settings-seg">
+            {SPOILER_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={"settings-seg__btn" + (settings.spoilerBlurMode === opt.id ? " settings-seg__btn--active" : "")}
+                onClick={() => void save({ spoilerBlurMode: opt.id })}
               >
                 {opt.label}
               </button>

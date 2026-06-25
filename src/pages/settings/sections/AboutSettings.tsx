@@ -21,7 +21,8 @@ interface AppInfo {
 
 export default function AboutSettings() {
   const { profile } = useProfile();
-  const { settings } = useSettings();
+  const { settings, update } = useSettings();
+  const [onboardingReset, setOnboardingReset] = useState(false);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
   const [copyLabel, setCopyLabel] = useState("Copy debug info");
@@ -198,7 +199,22 @@ export default function AboutSettings() {
           >
             {copyLabel}
           </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => {
+              void update({ hasCompletedOnboarding: false });
+              setOnboardingReset(true);
+            }}
+            title="Show the first-launch onboarding again. Does not delete profiles, addons, progress, or settings."
+          >
+            {onboardingReset ? "Onboarding will show on next launch" : "Reset onboarding"}
+          </button>
         </div>
+        <p className="muted small" style={{ marginTop: 8 }}>
+          Reset onboarding only re-shows the welcome flow. It does not delete
+          profiles, addons, watch progress, or settings.
+        </p>
       </section>
 
       <section className="settings-section">

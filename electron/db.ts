@@ -171,6 +171,27 @@ export function initDb(): Database.Database {
   }
 
   ensureDefaultProfile();
+
+  // One-time onboarding migration (additive; never wipes data). Existing
+  // installs that already have addons/progress/library or extra profiles are
+  // marked as onboarded so an upgrade never forces them through onboarding.
+  // Fresh installs leave it false so onboarding shows. Only runs when the key
+  // is absent, so a user-initiated "Reset onboarding" is never undone.
+  try {
+    if (getSetting("hasCompletedOnboarding") === null) {
+      const count = (sql: string): number =>
+        ((db!.prepare(sql).get() as { n: number } | undefined)?.n ?? 0);
+      const hasExistingData =
+        count("SELECT COUNT(*) AS n FROM addons") > 0 ||
+        count("SELECT COUNT(*) AS n FROM watch_progress") > 0 ||
+        count("SELECT COUNT(*) AS n FROM library_items") > 0 ||
+        count("SELECT COUNT(*) AS n FROM profiles") > 1;
+      setSetting("hasCompletedOnboarding", hasExistingData ? "true" : "false");
+    }
+  } catch {
+    /* non-fatal: onboarding will simply show if this fails */
+  }
+
   return db;
 }
 
@@ -1173,6 +1194,10 @@ export interface AppSettings {
   preferBingeGroup: boolean;
   /** JSON map of catalog display-name overrides keyed by addonId::type::catalogId. Default "{}". */
   catalogNameOverrides: string;
+  /** Whether first-launch onboarding has been completed. Default false (fresh installs). */
+  hasCompletedOnboarding: boolean;
+  /** Spoiler-blur mode: "off" | "episodes" | "all". Default "off". */
+  spoilerBlurMode: "off" | "episodes" | "all";
 }
 
 const DEFAULTS: AppSettings = {
@@ -1214,6 +1239,8 @@ const DEFAULTS: AppSettings = {
   rowDensity: "comfortable",
   preferBingeGroup: true,
   catalogNameOverrides: "{}",
+  hasCompletedOnboarding: false,
+  spoilerBlurMode: "off",
 };
 
 export function getSetting(key: string): string | null {
@@ -1320,6 +1347,10 @@ export function getAppSettings(): AppSettings {
         ? DEFAULTS.preferBingeGroup
         : getSetting("preferBingeGroup") === "true",
     catalogNameOverrides: getSetting("catalogNameOverrides") ?? DEFAULTS.catalogNameOverrides,
+    hasCompletedOnboarding: getSetting("hasCompletedOnboarding") === "true",
+    spoilerBlurMode: (["off", "episodes", "all"].includes(getSetting("spoilerBlurMode") ?? "")
+      ? getSetting("spoilerBlurMode")
+      : DEFAULTS.spoilerBlurMode) as AppSettings["spoilerBlurMode"],
   };
 }
 
@@ -1444,6 +1475,12 @@ export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.catalogNameOverrides !== undefined) {
     setSetting("catalogNameOverrides", patch.catalogNameOverrides);
+  }
+  if (patch.hasCompletedOnboarding !== undefined) {
+    setSetting("hasCompletedOnboarding", patch.hasCompletedOnboarding ? "true" : "false");
+  }
+  if (patch.spoilerBlurMode !== undefined) {
+    setSetting("spoilerBlurMode", patch.spoilerBlurMode);
   }
   return getAppSettings();
 }

@@ -64,6 +64,8 @@ const FALLBACK: AppSettings = {
   rowDensity: "comfortable",
   preferBingeGroup: true,
   catalogNameOverrides: "{}",
+  hasCompletedOnboarding: false,
+  spoilerBlurMode: "off",
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);

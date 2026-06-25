@@ -321,6 +321,19 @@ export interface AppSettings {
    * browsing UI (Home rows, Discover, expanded catalog). Default "{}".
    */
   catalogNameOverrides: string;
+  /**
+   * Whether the first-launch onboarding flow has been completed/dismissed.
+   * Fresh installs start false (onboarding shows); existing installs are
+   * migrated to true on first run. "Reset onboarding" sets this back to false.
+   */
+  hasCompletedOnboarding: boolean;
+  /**
+   * Spoiler-blur mode for posters/thumbnails.
+   * "off" (default) = never blur. "episodes" = blur unwatched episode
+   * thumbnails. "all" = also blur the unwatched media detail poster.
+   * Collection grids and logos/text are never blurred.
+   */
+  spoilerBlurMode: "off" | "episodes" | "all";
 }
 
 /** Per-stream-format capability hints used by the action picker. */

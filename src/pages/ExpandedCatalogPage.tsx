@@ -262,7 +262,11 @@ export default function ExpandedCatalogPage() {
       {addon && items.length > 0 && (
         <div className="poster-grid">
           {items.map((it) => (
-            <CatalogItem key={`${it.type}:${it.id}`} item={it} />
+            <CatalogItem
+              key={`${it.type}:${it.id}`}
+              item={it}
+              catalog={{ addonId, catalogId, catalogName }}
+            />
           ))}
         </div>
       )}

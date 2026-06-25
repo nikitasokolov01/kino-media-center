@@ -375,7 +375,11 @@ export default function DiscoverPage() {
       {items.length > 0 && (
         <div className="poster-grid">
           {items.map((it) => (
-            <CatalogItem key={`${it.type}:${it.id}`} item={it} />
+            <CatalogItem
+              key={`${it.type}:${it.id}`}
+              item={it}
+              catalog={selected ? { addonId: selected.addonId, catalogId: selected.catalogId, catalogName: selected.catalogName } : undefined}
+            />
           ))}
         </div>
       )}

@@ -6361,3 +6361,609 @@ kbd,
   padding-left: 0;
   padding-right: 0;
 }
+
+/* --- Phase 1: first-launch onboarding --- */
+.app-boot {
+  position: fixed;
+  inset: 0;
+  background: var(--app-bg-override, var(--color-bg, #0f1115));
+}
+
+.onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5vh 4vw;
+  overflow: auto;
+  background: var(--color-bg, #0f1115);
+}
+.onboarding__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60% 80% at 20% 0%, color-mix(in srgb, var(--color-accent) 22%, transparent) 0%, transparent 60%),
+    radial-gradient(50% 70% at 100% 100%, color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 16%, transparent) 0%, transparent 55%),
+    linear-gradient(160deg, var(--color-bg-elevated, #15181f) 0%, var(--color-bg, #0f1115) 70%);
+  animation: onboarding-pan 24s ease-in-out infinite alternate;
+}
+.onboarding__scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0,0.45) 100%);
+  pointer-events: none;
+}
+@keyframes onboarding-pan {
+  from { transform: scale(1.04) translateY(0); }
+  to   { transform: scale(1.12) translateY(-2%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .onboarding__backdrop { animation: none; }
+}
+
+.onboarding__card {
+  position: relative;
+  z-index: 1;
+  width: min(560px, 100%);
+  background: color-mix(in srgb, var(--color-bg-elevated, #15181f) 86%, transparent);
+  border: 1px solid var(--color-border, #2a2f3a);
+  border-radius: var(--radius-xl, 18px);
+  box-shadow: var(--shadow-hero, 0 24px 80px rgba(0,0,0,0.6));
+  backdrop-filter: var(--backdrop-blur, blur(12px));
+  -webkit-backdrop-filter: var(--backdrop-blur, blur(12px));
+  padding: 30px 34px 26px;
+}
+
+.onboarding__dots {
+  display: flex;
+  gap: 7px;
+  justify-content: center;
+  margin-bottom: 22px;
+}
+.onboarding__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-surface-hover, #2a2f3a);
+  transition: background var(--motion-fast) var(--ease-standard), width var(--motion-fast) var(--ease-standard);
+}
+.onboarding__dot--active {
+  width: 20px;
+  border-radius: 999px;
+  background: var(--color-accent, #6aa3ff);
+}
+.onboarding__dot--done { background: color-mix(in srgb, var(--color-accent) 55%, transparent); }
+
+.onboarding__step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.onboarding__step--welcome {
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  padding: 14px 0 8px;
+}
+.onboarding__title {
+  margin: 6px 0 0;
+  font-size: clamp(26px, 4vw, 36px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--color-text, #fff);
+}
+.onboarding__lede {
+  margin: 0;
+  max-width: 42ch;
+  color: var(--color-text-muted, #9aa3b2);
+  font-size: var(--text-md, 14px);
+  line-height: 1.5;
+}
+.onboarding__heading {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text, #fff);
+}
+.onboarding__sub {
+  margin: 0 0 6px;
+  color: var(--color-text-muted, #9aa3b2);
+  font-size: var(--text-sm, 13px);
+  line-height: 1.5;
+}
+.onboarding__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.onboarding__input { width: 100%; }
+.onboarding__banner { margin: 4px 0 0; }
+.onboarding__success {
+  font-size: var(--text-sm, 13px);
+  color: var(--color-success, #4ade80);
+}
+.onboarding__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+.onboarding__spacer { flex: 1; }
+
+.onboarding__radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.onboarding__radio {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border, #2a2f3a);
+  border-radius: var(--radius-md, 10px);
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard);
+}
+.onboarding__radio--active {
+  border-color: var(--color-accent, #6aa3ff);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+.onboarding__radio input { margin-top: 3px; }
+.onboarding__radio-desc {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-text-muted, #9aa3b2);
+  font-size: var(--text-sm, 13px);
+  line-height: 1.45;
+}
+
+.onboarding__theme-row,
+.onboarding__layout-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.onboarding__theme {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--color-border, #2a2f3a);
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text, #fff);
+  transition: border-color var(--motion-fast) var(--ease-standard);
+}
+.onboarding__theme--active { border-color: var(--color-accent, #6aa3ff); }
+.onboarding__theme-swatch {
+  position: relative;
+  width: 64px;
+  height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.onboarding__theme-accent {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  width: 22px;
+  height: 6px;
+  border-radius: 999px;
+}
+.onboarding__theme-label {
+  font-size: var(--text-xs, 11px);
+  font-weight: 600;
+}
+
+/* --- Phase 1: Home empty state CTA --- */
+.home-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 64px 24px;
+  max-width: 460px;
+  margin: 40px auto;
+}
+.home-empty__title {
+  margin: 6px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text, #fff);
+}
+.home-empty__sub {
+  margin: 0 0 6px;
+  color: var(--color-text-muted, #9aa3b2);
+  font-size: var(--text-sm, 13px);
+  line-height: 1.5;
+}
+
+/* --- Phase 2: media detail polish (visual only) --- */
+.media-detail__hero {
+  min-height: clamp(380px, 44vw, 560px);
+  background-position: center 18%;
+}
+/* Smoother, darker cinematic fade into the page; theme-aware bottom stop. */
+.media-detail__hero::before {
+  background: linear-gradient(
+    to bottom,
+    rgba(0,0,0,0.10) 0%,
+    rgba(0,0,0,0.30) 38%,
+    rgba(0,0,0,0.62) 66%,
+    color-mix(in srgb, var(--color-bg) 88%, transparent) 88%,
+    var(--color-bg) 100%
+  );
+}
+.media-detail__hero::after {
+  background: linear-gradient(
+    to right,
+    rgba(0,0,0,0.78) 0%,
+    rgba(0,0,0,0.40) 48%,
+    rgba(0,0,0,0.08) 78%,
+    transparent 100%
+  );
+}
+
+/* Logo art: a touch larger with a stronger readable shadow. */
+.media-detail__logo {
+  max-width: min(60%, 420px);
+  max-height: clamp(96px, 16vh, 150px);
+  filter: drop-shadow(0 4px 16px rgba(0,0,0,0.7));
+}
+
+/* Metadata badges (year / runtime / type / rating). */
+.media-detail__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+.media-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-xs, 11px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(4px);
+  text-shadow: none;
+}
+.media-badge--type {
+  background: color-mix(in srgb, var(--color-accent) 30%, rgba(0,0,0,0.3));
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.media-badge--rating {
+  color: #ffd86b;
+}
+
+/* Action row: premium grouping + a slightly larger primary button. */
+.media-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.media-detail__play-btn {
+  font-weight: 600;
+  padding: 10px 22px;
+  border-radius: var(--control-radius, 8px);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* Season selector: cleaner pill tabs. */
+.season-tabs {
+  gap: 8px;
+}
+.season-tab {
+  border-radius: 999px;
+  padding: 7px 14px;
+  border: 1px solid var(--color-border, var(--border));
+  background: var(--color-surface, var(--panel));
+  transition: background var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard),
+              color var(--motion-fast) var(--ease-standard);
+}
+.season-tab:hover {
+  background: var(--color-surface-hover, var(--panel-2));
+}
+.season-tab--active {
+  border-color: var(--color-accent, var(--accent));
+}
+
+/* Episode cards: premium surface with hover lift + accent rail on hover. */
+.episode-item {
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--color-border, var(--border));
+  background: var(--color-surface, var(--panel));
+  overflow: hidden;
+  transition: transform var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard),
+              box-shadow var(--motion-fast) var(--ease-standard);
+}
+.episode-item:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  box-shadow: var(--shadow-card, 0 8px 24px rgba(0,0,0,0.4));
+}
+.episode-item--watched { opacity: 0.82; }
+.episode-item--watched:hover { opacity: 1; }
+.episode-item__nextup-badge {
+  background: var(--color-accent, var(--accent));
+  color: var(--color-accent-fg, #0b1020);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* --- Phase 3: player polish (additive, visual only) --- */
+
+/* Overlay never lets stray text selection happen during playback. */
+.emb-overlay {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Cinematic loading: a touch more polish on the status row. */
+.emb-cine__status {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+}
+
+/* Error panel: deeper scrim + blur so it reads cleanly over the backdrop, and
+   the primary action follows the theme accent instead of a hardcoded blue. */
+.emb-overlay__error-panel {
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+}
+.emb-overlay__err-btn--primary {
+  background: color-mix(in srgb, var(--color-accent) 26%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 75%, #ffffff);
+}
+.emb-overlay__err-btn--primary:hover {
+  background: color-mix(in srgb, var(--color-accent) 38%, transparent);
+  border-color: var(--color-accent);
+}
+
+/* Next Episode: streaming-style card (replaces the single pill button). The
+   .emb-overlay__next-ep wrapper keeps its bottom-right placement + fade. */
+.emb-next-card {
+  width: clamp(240px, 26vw, 320px);
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(12, 14, 20, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  color: #fff;
+}
+.emb-next-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.emb-next-card__label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.6);
+}
+.emb-next-card__countdown {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-accent, #6aa3ff);
+}
+.emb-next-card__title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.emb-next-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.emb-next-card__btn {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.emb-next-card__btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.emb-next-card__btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.emb-next-card__btn--primary {
+  flex-basis: 100%;
+  background: var(--color-accent, #6aa3ff);
+  border-color: var(--color-accent, #6aa3ff);
+  color: var(--color-accent-fg, #0b1020);
+}
+.emb-next-card__btn--primary:hover:not(:disabled) {
+  background: var(--color-accent-hover, var(--color-accent, #6aa3ff));
+  border-color: var(--color-accent-hover, var(--color-accent, #6aa3ff));
+}
+.emb-next-card__btn--ghost {
+  flex: 0 0 auto;
+  background: transparent;
+  border-color: transparent;
+  color: rgba(255, 255, 255, 0.7);
+}
+.emb-next-card__btn--ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: transparent;
+}
+
+/* --- Sprint: Phase 1 visual fixes --- */
+
+/* (1) Trailer preview: kill EVERY native media control, including the centered
+   overlay play button + 10s skip controls that could flash before JS settles. */
+.media-trailer__preview-media::-webkit-media-controls-overlay-play-button,
+.media-trailer__preview-media::-webkit-media-controls-overlay-enclosure,
+.media-trailer__preview-media::-webkit-media-controls-play-button,
+.media-trailer__preview-media::-webkit-media-controls-fullscreen-button,
+.media-trailer__preview-media::-webkit-media-controls-timeline,
+.media-trailer__preview-media::-webkit-media-controls-current-time-display {
+  display: none !important;
+  -webkit-appearance: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* (3) Full-bleed media hero up to the top, under the floating nav. */
+.content:has(.media-page) {
+  padding-top: 0;
+}
+.media-page {
+  position: relative;
+}
+.media-detail__hero {
+  /* Break out of the page horizontal padding so the backdrop is full width. */
+  margin-left: calc(-1 * var(--page-padding, 32px));
+  margin-right: calc(-1 * var(--page-padding, 32px));
+  width: calc(100% + 2 * var(--page-padding, 32px));
+}
+
+/* (4) Styled Back button (replaces the plain hyperlink). */
+.media-back {
+  margin: 0 0 12px;
+}
+.media-back__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.media-back--overlay {
+  position: absolute;
+  top: 14px;
+  left: var(--page-padding, 32px);
+  z-index: 6;
+  margin: 0;
+}
+.media-back--overlay .media-back__btn {
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #fff;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.media-back--overlay .media-back__btn:hover {
+  background: rgba(0, 0, 0, 0.6);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Collection page */
+.collection-page__header {
+  margin: 8px 0 16px;
+}
+.collection-page__title {
+  margin: 0;
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.collection-page__desc {
+  margin: 8px 0 0;
+  max-width: 70ch;
+  color: var(--color-text-muted, var(--muted));
+  font-size: var(--text-sm, 13px);
+  line-height: 1.5;
+}
+
+/* --- Sprint follow-up: trailer preview control flash (definitive) --- */
+/* Preview video/iframe stay invisible until actually playing, so the native
+   control overlay can never be seen during first paint. Then they fade in. */
+.trailer-preview-video,
+.trailer-preview-frame {
+  opacity: 0;
+  transition: opacity 280ms ease;
+}
+.trailer-preview-video.is-ready,
+.trailer-preview-frame.is-ready {
+  opacity: 1;
+}
+/* Belt-and-suspenders: hide every native media control on the preview video. */
+.trailer-preview-video::-webkit-media-controls,
+.trailer-preview-video::-webkit-media-controls-enclosure,
+.trailer-preview-video::-webkit-media-controls-panel,
+.trailer-preview-video::-webkit-media-controls-overlay-enclosure,
+.trailer-preview-video::-webkit-media-controls-overlay-play-button,
+.trailer-preview-video::-webkit-media-controls-start-playback-button,
+.trailer-preview-video::-webkit-media-controls-play-button,
+.trailer-preview-video::-webkit-media-controls-fullscreen-button,
+.trailer-preview-video::-webkit-media-controls-timeline,
+.trailer-preview-video::-webkit-media-controls-current-time-display,
+.trailer-preview-video::-webkit-media-controls-time-remaining-display {
+  display: none !important;
+  -webkit-appearance: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* --- Spoiler blur (opt-in; default "off" never blurs) ---
+   POSITIVE gating: blur ONLY when the attribute is explicitly "episodes" or
+   "all". If the attribute is absent or "off", nothing blurs (no footgun where
+   a missing attribute turns blur on). The class is also only added by the
+   components when the mode is episodes/all, so this is double-safe. */
+html[data-spoiler-blur="episodes"] .poster--spoiler-blurred,
+html[data-spoiler-blur="all"] .poster--spoiler-blurred {
+  filter: blur(16px);
+  transform: scale(1.03);     /* hide blurred translucent edges */
+  transition: filter 220ms ease;
+}
+/* Reveal on hover/focus of the containing card/button. */
+html[data-spoiler-blur="episodes"] .episode-item__thumb-btn:hover .poster--spoiler-blurred,
+html[data-spoiler-blur="episodes"] .episode-item__thumb-btn:focus-visible .poster--spoiler-blurred,
+html[data-spoiler-blur="all"] .episode-item__thumb-btn:hover .poster--spoiler-blurred,
+html[data-spoiler-blur="all"] .episode-item__thumb-btn:focus-visible .poster--spoiler-blurred,
+html[data-spoiler-blur="all"] .media-detail__poster:hover .poster--spoiler-blurred {
+  filter: none;
+}
+/* Hard reset: OFF mode must never blur anything intentional. Collection grids
+   are never blurred regardless of mode. */
+html[data-spoiler-blur="off"] .poster--spoiler-blurred,
+.collection-page .catalog-item__poster,
+.collection-page img {
+  filter: none !important;
+  backdrop-filter: none !important;
+  opacity: 1 !important;
+}

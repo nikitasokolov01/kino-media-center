@@ -173,6 +173,8 @@ export default function EmbeddedPlayerOverlay() {
   const [showNextEpPrompt, setShowNextEpPrompt] = useState(false);
   /** Transitioning to next episode — prevents double-click. */
   const [transitioning, setTransitioning] = useState(false);
+  /** User dismissed the Next Episode prompt for the current episode. */
+  const [nextEpDismissed, setNextEpDismissed] = useState(false);
   /** The actual stream currently playing (for next-episode affinity). */
   const playingStreamRef = useRef<StremioStream | null>(null);
   /** Addon id that provided the currently playing stream. */
@@ -562,6 +564,7 @@ export default function EmbeddedPlayerOverlay() {
     setFetchError(null);
     setOptimisticSid(null);
     setOptimisticAid(null);
+    setNextEpDismissed(false);
   }, [req?.playableId]);
 
   // ---- Apply subtitle/audio preferences once when tracks first arrive ------
@@ -1098,6 +1101,9 @@ export default function EmbeddedPlayerOverlay() {
   const duration = playbackState?.duration ?? -1;
   const progressValue = dragging ? dragValue : (timePos >= 0 ? timePos : 0);
   const progressMax = duration > 0 ? duration : 100;
+  // Display-only countdown for the Next Episode card (no auto-advance).
+  const nextEpRemaining =
+    duration > 0 && timePos >= 0 ? Math.max(0, Math.ceil(duration - timePos)) : null;
 
   const handleProgressMouseDown = (e: React.MouseEvent<HTMLInputElement>) => {
     draggingRef.current = true;
@@ -1460,23 +1466,50 @@ export default function EmbeddedPlayerOverlay() {
         )}
 
         {/* ── Next Episode prompt (bottom-right, above controls) ── */}
-        {showNextEpPrompt && nextEpButtonLabel && (
+        {showNextEpPrompt && !nextEpDismissed && nextEpButtonLabel && (
           <div
             className="emb-overlay__next-ep"
             onMouseEnter={pinControls}
             onMouseLeave={unpinControls}
           >
-            <button
-              type="button"
-              className="emb-overlay__next-ep-btn"
-              onClick={handleNextEpisode}
-              disabled={!nextSource || transitioning}
-              title={nextSource ? "Play next episode (N)" : "Preparing next episode…"}
-            >
-              {transitioning ? "Starting…"
-                : nextSourceLoading ? "Preparing…"
-                : <><SkipForwardIcon size={13} style={{verticalAlign:"middle",marginRight:5}} />{"Up Next: " + nextEpButtonLabel}</>}
-            </button>
+            <div className="emb-next-card">
+              <div className="emb-next-card__head">
+                <span className="emb-next-card__label">Up Next</span>
+                {nextEpRemaining !== null && nextEpRemaining <= 60 && (
+                  <span className="emb-next-card__countdown">in {nextEpRemaining}s</span>
+                )}
+              </div>
+              <div className="emb-next-card__title">{nextEpButtonLabel}</div>
+              <div className="emb-next-card__actions">
+                <button
+                  type="button"
+                  className="emb-next-card__btn emb-next-card__btn--primary"
+                  onClick={handleNextEpisode}
+                  disabled={!nextSource || transitioning}
+                  title={nextSource ? "Play next episode (N)" : "Preparing next episode"}
+                >
+                  {transitioning
+                    ? "Starting..."
+                    : nextSourceLoading
+                      ? "Preparing..."
+                      : (<><SkipForwardIcon size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />Play Now</>)}
+                </button>
+                <button
+                  type="button"
+                  className="emb-next-card__btn"
+                  onClick={() => { void openSourcePanel(); }}
+                >
+                  Choose source
+                </button>
+                <button
+                  type="button"
+                  className="emb-next-card__btn emb-next-card__btn--ghost"
+                  onClick={() => setNextEpDismissed(true)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

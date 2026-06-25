@@ -15,7 +15,7 @@
 //      as meta resolves.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { useProfile } from "../state/ProfileContext.js";
 import { useLibrary } from "../state/LibraryContext.js";
 import { useToast } from "../state/ToastContext.js";
@@ -36,6 +36,7 @@ import {
 import SourcesSection from "../components/SourcesSection.js";
 import EpisodeSelector from "../components/EpisodeSelector.js";
 import MediaTrailer from "../components/MediaTrailer.js";
+import BackButton from "../components/BackButton.js";
 import { getTrailerInfo } from "../core/stremio/trailer.js";
 import type {
   SelectedPlayableItem,
@@ -73,6 +74,16 @@ export default function MediaPage() {
   const type = decodeURIComponent(rawType ?? "");
   const id = decodeURIComponent(rawId ?? "");
   const isSeries = type === "series";
+
+  // Optional deep-link context (e.g. from Continue Watching): default the
+  // episode selector to this season instead of Season 1.
+  const [searchParams] = useSearchParams();
+  const initialSeasonParam = (() => {
+    const raw = searchParams.get("season");
+    if (raw == null) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  })();
 
   const { profile, loading: profileLoading } = useProfile();
   const { isInLibrary, add: addToLibrary, remove: removeFromLibrary } = useLibrary();
@@ -662,6 +673,20 @@ export default function MediaPage() {
   const meta = result?.meta;
   const videos = asArray<StremioVideo>(meta?.videos);
 
+  // Collection safety net: a collection that slipped past catalog-context
+  // routing must never render as a playable movie. A collection's meta lists
+  // its member movies as `videos` that carry no season/episode (normal movies
+  // have no such videos). meta.type === "collection" is also honored.
+  const looksLikeCollection = useMemo(() => {
+    if (!meta) return false;
+    if (String(meta.type).toLowerCase() === "collection") return true;
+    if (type !== "movie") return false;
+    const members = videos.filter(
+      (v) => typeof v.id === "string" && v.season == null && v.episode == null,
+    );
+    return members.length >= 2;
+  }, [meta, type, videos]);
+
   // Anime classification — prefers Kitsu/provider signals over genre guessing.
   // Drives the anime-specific default audio language when launching MPV.
   const isAnime = useMemo(
@@ -745,6 +770,24 @@ export default function MediaPage() {
   // Trailer (if any) for the hero preview + Watch Trailer button.
   const trailer = useMemo(() => getTrailerInfo(meta), [meta]);
 
+  // Spoiler blur for the media-detail poster: only in "all" mode, only when
+  // the media is actually unwatched.
+  const shouldBlurMediaPoster =
+    !!meta &&
+    settings.spoilerBlurMode === "all" &&
+    (isSeries ? watchedSet.size === 0 : !watchedSet.has(meta.id));
+  if (import.meta.env?.DEV && meta) {
+    // eslint-disable-next-line no-console
+    console.debug("[spoiler:media]", { mode: settings.spoilerBlurMode, shouldBlurMediaPoster });
+  }
+
+  // Human label for the type badge (anime detection wins over the raw type).
+  const typeLabel = isAnime
+    ? "Anime"
+    : type
+      ? type.charAt(0).toUpperCase() + type.slice(1)
+      : "";
+
   const genres = asArray<string>(meta?.genres);
   const cast = asArray<string>(meta?.cast);
   const director = joinList(meta?.director);
@@ -815,11 +858,23 @@ export default function MediaPage() {
 
   // --------------------- States ----------------------------------------
 
+  // If this is actually a collection, send it to the collection page so no
+  // Play/Resume/source UI is ever shown for the collection itself.
+  if (meta && looksLikeCollection) {
+    const addonQ = result ? `?addon=${encodeURIComponent(result.source.addonId)}` : "";
+    return (
+      <Navigate
+        to={`/collection/${encodeURIComponent(type)}/${encodeURIComponent(id)}${addonQ}`}
+        replace
+      />
+    );
+  }
+
   return (
     <div className="page media-page">
-      <p>
-        <Link to="/">← Back to Home</Link>
-      </p>
+      <div className="media-back media-back--overlay">
+        <BackButton />
+      </div>
 
       {profileLoading && <p className="muted">Loading profile…</p>}
 
@@ -896,7 +951,11 @@ export default function MediaPage() {
             <div className="media-detail__hero-inner">
               <div className="media-detail__poster">
                 {meta.poster ? (
-                  <img src={meta.poster} alt="" />
+                  <img
+                    src={meta.poster}
+                    alt=""
+                    className={shouldBlurMediaPoster ? "poster--spoiler-blurred" : undefined}
+                  />
                 ) : (
                   <div className="media-detail__poster-placeholder" aria-hidden>
                     {meta.name.slice(0, 1).toUpperCase()}
@@ -913,22 +972,20 @@ export default function MediaPage() {
                 ) : (
                   <h1 className="media-detail__title">{meta.name}</h1>
                 )}
-                <div className="media-detail__quickmeta">
-                  {year && <span>{year}</span>}
-                  {runtime && (
-                    <>
-                      <span className="dot">·</span>
-                      <span>{runtime}</span>
-                    </>
+                <div className="media-detail__badges">
+                  {year && <span className="media-badge">{year}</span>}
+                  {runtime && <span className="media-badge">{runtime}</span>}
+                  {typeLabel && (
+                    <span className="media-badge media-badge--type">{typeLabel}</span>
                   )}
                   {rating !== undefined && rating !== null && rating !== "" && (
-                    <>
-                      <span className="dot">·</span>
-                      <span title="IMDB rating">★ {String(rating)}</span>
-                    </>
+                    <span className="media-badge media-badge--rating" title="IMDB rating">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ marginRight: 3, marginBottom: -1 }}>
+                        <polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9" />
+                      </svg>
+                      {String(rating)}
+                    </span>
                   )}
-                  <span className="dot">·</span>
-                  <span className="muted">{type}</span>
                 </div>
                 {genres.length > 0 && (
                   <div className="media-detail__genres">
@@ -1080,6 +1137,8 @@ export default function MediaPage() {
               // (see EpisodeSelector). No bottom sources block.
               <EpisodeSelector
                 videos={videos}
+                showBackdrop={meta.background ?? meta.poster}
+                initialSeason={initialSeasonParam}
                 selectedVideoId={showSourcesForVideoId}
                 onSelect={handleEpisodeSelect}
                 renderSelectedSources={() => renderSourcesArea("inline")}

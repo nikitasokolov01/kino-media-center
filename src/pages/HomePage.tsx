@@ -6,6 +6,7 @@ import CatalogRow from "../components/CatalogRow.js";
 import ContinueWatchingRow from "../components/ContinueWatchingRow.js";
 import LibraryRecentRow from "../components/LibraryRecentRow.js";
 import HomeHero from "../components/HomeHero.js";
+import KinoLogo from "../components/KinoLogo.js";
 import type { AddonRow } from "../types/preload.js";
 import { catalogRequiresExtras } from "../core/stremio/catalog.js";
 import { resolveCatalogDisplayNames } from "../core/catalog/catalogNames.js";
@@ -131,9 +132,14 @@ export default function HomePage() {
         )}
 
         {profile && !addonsLoading && addons.length === 0 && (
-          <div className="empty">
-            You have not installed any addons yet.{" "}
-            <Link to="/addons">Go to Addons</Link> to add one.
+          <div className="home-empty">
+            <KinoLogo mode="icon" size={40} />
+            <h2 className="home-empty__title">No addons yet</h2>
+            <p className="home-empty__sub">
+              Kino streams from Stremio-compatible addons. Add one to start
+              browsing catalogs, search, and Discover.
+            </p>
+            <Link to="/addons" className="btn btn--primary">Add Addon</Link>
           </div>
         )}
 

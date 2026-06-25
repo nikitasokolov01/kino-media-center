@@ -45,6 +45,9 @@ export default function MediaTrailer({ trailer, autoplayHero, title }: MediaTrai
   // Delay the hero preview slightly so the static backdrop shows first and we
   // never flash a black frame on navigation.
   const [showHeroPreview, setShowHeroPreview] = useState(false);
+  // The preview element is invisible until it is actually playing, so Chromium
+  // can never flash its native control overlay during the first paint.
+  const [previewReady, setPreviewReady] = useState(false);
 
   // Modal playback state (optimistic for YouTube; authoritative for <video>).
   const [modalPlaying, setModalPlaying] = useState(true);
@@ -62,6 +65,7 @@ export default function MediaTrailer({ trailer, autoplayHero, title }: MediaTrai
       setShowHeroPreview(false);
       return;
     }
+    setPreviewReady(false);
     const t = setTimeout(() => setShowHeroPreview(true), 1400);
     return () => clearTimeout(t);
   }, [autoplayHero, trailer]);
@@ -168,25 +172,31 @@ export default function MediaTrailer({ trailer, autoplayHero, title }: MediaTrai
           {trailer.kind === "direct" ? (
             <video
               ref={heroVideoRef}
-              className="media-trailer__preview-media"
+              className={`media-trailer__preview-media trailer-preview-video${previewReady ? " is-ready" : ""}`}
               src={trailer.url}
               autoPlay
               muted
               loop
               playsInline
               controls={false}
+              controlsList="nodownload nofullscreen noremoteplayback noplaybackrate"
               disablePictureInPicture
               tabIndex={-1}
+              style={{ opacity: previewReady ? 1 : 0 }}
+              onCanPlay={() => setPreviewReady(true)}
+              onPlaying={() => setPreviewReady(true)}
             />
           ) : (
             <iframe
               ref={heroIframeRef}
-              className="media-trailer__preview-media"
+              className={`media-trailer__preview-media trailer-preview-frame${previewReady ? " is-ready" : ""}`}
               src={youTubeEmbedUrl(trailer.ytId, { hero: true, muted: true })}
               title={`${title} trailer preview`}
               allow="autoplay; encrypted-media"
               frameBorder={0}
               tabIndex={-1}
+              style={{ opacity: previewReady ? 1 : 0 }}
+              onLoad={() => { setTimeout(() => setPreviewReady(true), 350); }}
             />
           )}
           <div className="media-trailer__preview-scrim" />

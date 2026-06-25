@@ -110,7 +110,13 @@ export default function ContinueWatchingRow() {
       </header>
       <div className="catalog-row__strip" ref={stripRef}>
         {items.map((p) => {
-          const to = `/media/${encodeURIComponent(p.type)}/${encodeURIComponent(p.mediaId)}`;
+          // For series, carry the in-progress season/episode so the media page
+          // opens on the right season (not Season 1).
+          const seasonQ =
+            p.type === "series" && typeof p.season === "number"
+              ? `?season=${p.season}${typeof p.episode === "number" ? `&episode=${p.episode}` : ""}`
+              : "";
+          const to = `/media/${encodeURIComponent(p.type)}/${encodeURIComponent(p.mediaId)}${seasonQ}`;
           const label = episodeLabel(p);
           return (
             <Link

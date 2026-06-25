@@ -81,6 +81,13 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     title: "Kino",
     backgroundColor: "#0f1115",
+    // Dev/taskbar window icon. In packaged builds electron-builder applies
+    // build/icon.ico to the exe; build/ is not bundled, so this guard simply
+    // no-ops there. resolves to <project>/build/icon.png in dev.
+    icon: (() => {
+      const p = path.join(app.getAppPath(), "build", "icon.png");
+      return fs.existsSync(p) ? p : undefined;
+    })(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
