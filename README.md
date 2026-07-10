@@ -1,93 +1,63 @@
-# Media Center App — MVP
+# Kino — Desktop Media Center
 
-Electron + React + TypeScript + Vite + SQLite (better-sqlite3) desktop app.
+Kino is a desktop media center app built with Electron, React, TypeScript, and Vite. It is designed around a cinematic browsing experience for movies, shows, anime, and personal watch activity using Stremio-compatible addons.
 
-This first MVP can install Stremio-compatible addons by their base URL or
-direct `manifest.json` URL, validate the manifest, and persist installed
-addons per profile in SQLite. No streaming playback, no debrid, and no
-hardcoded addon sources.
+The goal of Kino is to feel closer to a native streaming app than a basic web catalog: profiles, addon-powered discovery, source selection, progress tracking, episode browsing, and a desktop-first player workflow.
 
-## Project layout
+> Kino is a personal solo project and experimental media interface. It does not ship with hardcoded media sources or debrid integrations.
 
-```
-electron/
-  main.ts            Electron main process, window + IPC handlers
-  preload.ts         Typed contextBridge API exposed as window.mediaCenter
-  ipc-channels.ts    Shared IPC channel names
-  db.ts              SQLite schema, profile + addon storage
-  tsconfig.json      tsc config for the Electron build
+## What Kino does
 
-src/
-  main.tsx           React entrypoint
-  App.tsx            Sidebar + routes
-  pages/
-    HomePage.tsx
-    AddonsPage.tsx   Paste-to-install form + installed-addon grid
-  components/
-    AddonCard.tsx
-  state/
-    ProfileContext.tsx
-  core/
-    stremio/         <-- isolated core module (no Electron, no UI imports)
-      index.ts       resolveAddonFromUrl() + re-exports
-      url.ts         normalizeAddonUrl()
-      fetch.ts       fetchManifest()
-      validate.ts    validateManifest() — id, name, resources, types
-      types.ts
-  types/
-    preload.d.ts     Global typing for window.mediaCenter
+Kino lets users install Stremio-compatible addons, browse catalog content, search across media, open movie/show detail pages, select streams, and track what they have watched.
 
-vite.config.ts       Renderer build config
-tsconfig.json        Renderer tsc config
-index.html
-package.json
-```
+The app focuses on:
 
-## Install + run
+- A polished desktop media-center interface
+- Stremio-compatible addon support
+- Profile-based local data
+- Movie and series browsing
+- Search and metadata pages
+- Episode selection for shows
+- Source selection and playback workflow
+- Continue-watching progress
+- Watched badges and watch-state tracking
+- Local persistence through SQLite
+- A desktop app architecture using Electron
 
-Requires Node 20+ and a C++ build toolchain for `better-sqlite3` native bindings
-(on Windows: install with `npm install --global windows-build-tools` or use
-Visual Studio Build Tools).
+## Why I built it
 
-```bash
-npm install
-npm run dev
-```
+I built Kino to explore what a modern desktop media center could feel like if it combined the flexibility of Stremio-style addons with a more cinematic, focused user experience.
 
-`npm run dev` starts Vite on `localhost:5173`, compiles the Electron main +
-preload with tsc, and launches Electron once Vite is ready.
+A lot of media apps either feel too technical, too web-like, or too cluttered. Kino is my attempt to design something that feels more intentional: poster-first, fast to browse, and structured around how people actually decide what to watch.
 
-To build a production bundle:
+This project also helped me practice product design, frontend architecture, Electron app development, local data storage, and AI-assisted development workflows.
 
-```bash
-npm run build
-npm start
-```
+## Current status
 
-## How addon installation works
+Kino is still in active development. The repo started as an MVP for installing Stremio-compatible addons, but has since grown into a fuller desktop media-center prototype.
 
-1. User pastes any of:
-   - `https://example.com/`
-   - `https://example.com/path`
-   - `https://example.com/path/manifest.json`
-   - `stremio://example.com/manifest.json`
-2. `normalizeAddonUrl` rewrites it to a canonical `manifest.json` URL and a
-   trailing-slash base URL.
-3. `fetchManifest` GETs the manifest with a 15s timeout.
-4. `validateManifest` requires `id`, `name`, a non-empty `resources` array,
-   and a non-empty `types` array. Throws `InvalidManifestError` otherwise.
-5. The main process upserts the addon into SQLite, keyed by
-   `(profileId, manifest.id)` — reinstalling refreshes the stored manifest.
-6. The Addons page re-fetches the list and renders cards.
+Some areas may still be experimental, incomplete, or changing as the app evolves.
 
-## Data location
+## Tech stack
 
-SQLite database is stored in Electron's `app.getPath("userData")` directory
-as `media-center.db`. WAL mode is enabled; foreign keys are on.
+- **Electron** — desktop shell and native app runtime
+- **React** — renderer UI
+- **TypeScript** — type-safe app code
+- **Vite** — fast frontend build tooling
+- **SQLite / better-sqlite3** — local persistence
+- **Rust / native modules** — experimental embedded player work
+- **Stremio-compatible addons** — addon manifests, catalogs, metadata, and streams
 
-## Not in this MVP
+## Core features
 
-- Streaming playback
-- Debrid integrations
-- Hardcoded addons or piracy sources
-- Catalog/meta browsing UI
+### Addon installation
+
+Users can install Stremio-compatible addons by pasting a base URL or direct `manifest.json` URL. Kino normalizes the URL, fetches the manifest, validates it, and stores the addon locally.
+
+Supported input examples:
+
+```txt
+https://example.com/
+https://example.com/path
+https://example.com/path/manifest.json
+stremio://example.com/manifest.json
